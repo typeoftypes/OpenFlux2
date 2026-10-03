@@ -6,8 +6,8 @@ struct InfoView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var copied: String?
 
-    private let sol = "7yXWW2iAkKadyVvMjZLPYo1PqizvKqseG2ZQ1sZk9X1k"
-    private let eth = "0xd043E852158C13C8064a73b9cDd920DaAa80f0c1"
+    private let gram = "UQDzb_ImE9XMVwyNb3V6PKCCZaCKUKFQpaWhRajYg35SE2e5"
+    private let usdt = "TW4QFLy6pvejjuFdowanfbSfQWFprULcrc"
 
     var body: some View {
         NavigationView {
@@ -20,13 +20,13 @@ struct InfoView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Поддержать разработку ♥")
+                        Text("Люблю вас t.me/typeoftypes ♥")
                             .font(.headline)
                         Text("Нажми на адрес, чтобы скопировать.")
                             .font(.caption).foregroundColor(.secondary)
 
-                        donationRow(title: "Solana (SOL)", address: sol)
-                        donationRow(title: "Ethereum (ETH)", address: eth)
+                        donationRow(title: "GRAM (TON)", address: gram)
+                        donationRow(title: "USDT (TRC20)", address: usdt)
 
                         if let c = copied {
                             Label("\(c) скопирован", systemImage: "checkmark.circle.fill")
