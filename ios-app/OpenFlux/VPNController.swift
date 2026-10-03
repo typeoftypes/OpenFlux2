@@ -26,7 +26,10 @@ final class VPNController: ObservableObject {
         refreshStatus()
     }
 
-    func start(transport: String, url: String, maxToken: String, maxUid: String) {
+    func start(transport: String, url: String, maxToken: String, maxUid: String,
+               dns: String, tunnelUDP: Bool, split: String = "",
+               directDomains: String = "", profileID: UUID? = nil,
+               keySlot: String = "", onDemand: Bool = true) {
         Task {
             let m = manager ?? NETunnelProviderManager()
             let proto = NETunnelProviderProtocol()
@@ -35,10 +38,27 @@ final class VPNController: ObservableObject {
             proto.providerConfiguration = [
                 "transport": transport, "url": url,
                 "maxToken": maxToken, "maxUid": maxUid,
+                "dns": dns,
+                "udp": tunnelUDP ? "1" : "0",
+                "split": split,   // "ru-direct" = GeoIP RU bypasses the tunnel
+                "directDomains": directDomains,  // user's own bypass suffixes
+                // Only the profile id — the encryption secret itself stays in the
+                // shared Keychain and is fetched by the extension. This dictionary
+                // is persisted with the VPN profile, so it must not hold secrets.
+                "profileID": profileID?.uuidString ?? "",
+                "keySlot": keySlot,   // "direct" = взять ключ прямого канала
             ]
             m.protocolConfiguration = proto
             m.localizedDescription = "OpenFlux"
             m.isEnabled = true
+            // Auto-reconnect: with on-demand enabled, iOS relaunches the tunnel
+            // whenever it drops (extension killed, network change, etc.) instead
+            // of leaving the user to toggle it back on manually. Downside — while
+            // the tunnel flaps, on-demand keeps grabbing traffic and can starve a
+            // TestFlight/App Store download (the "can't update" softlock), so it's
+            // user-toggleable.
+            m.isOnDemandEnabled = onDemand
+            m.onDemandRules = onDemand ? [NEOnDemandRuleConnect()] : []
             do {
                 try await m.saveToPreferences()
                 try await m.loadFromPreferences()   // required before starting
@@ -51,13 +71,155 @@ final class VPNController: ObservableObject {
     }
 
     func stop() {
-        manager?.connection.stopVPNTunnel()
+        Task {
+            // Disable on-demand first, otherwise iOS would immediately reconnect
+            // the tunnel we're trying to stop.
+            if let m = manager {
+                m.isOnDemandEnabled = false
+                try? await m.saveToPreferences()
+                try? await m.loadFromPreferences()
+            }
+            manager?.connection.stopVPNTunnel()
+        }
+    }
+
+    // MARK: - Log relay
+    //
+    // The tunnel runs in a separate process, so the app cannot read the Go core's
+    // log directly — it asks the extension for it over the provider IPC channel.
+    // Set `logSink` to receive lines; polling runs only while the tunnel is up.
+
+    var logSink: ((String) -> Void)?
+
+    /// Document URL waiting on an interactive captcha inside the extension, or
+    /// nil. Polled over the same IPC channel as the log.
+    @Published var captchaURL: String?
+    @Published var captchaReason = ""
+    @Published var captchaRequestID = ""
+    /// Проверка в интересах узла: проходить НЕ отключая туннель.
+    @Published var remoteCaptchaURL: String?
+    @Published var remoteCaptchaReason = ""
+    @Published var remoteCaptchaRequestID = ""
+    @Published var remoteCaptchaProxy = ""
+
+    private var logTimer: Timer?
+
+    private func startLogPolling() {
+        guard logTimer == nil else { return }
+        logTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.pullLog() }
+        }
+    }
+
+    private func stopLogPolling() {
+        logTimer?.invalidate()
+        logTimer = nil
+    }
+
+    private func pullLog() {
+        guard let session = activeSession, let msg = "log".data(using: .utf8) else { return }
+        // Throws if the extension isn't up yet; that is normal during startup.
+        try? session.sendProviderMessage(msg) { [weak self] data in
+            guard let data = data, !data.isEmpty,
+                  let s = String(data: data, encoding: .utf8), !s.isEmpty
+            else { return }
+            Task { @MainActor in self?.logSink?(s) }
+        }
+        pullCaptcha(session)
+        pullRemoteCaptcha(session)
+    }
+
+    private var activeSession: NETunnelProviderSession? {
+        guard let s = manager?.connection as? NETunnelProviderSession,
+              s.status == .connected || s.status == .reasserting
+        else { return nil }
+        return s
+    }
+
+    private func pullCaptcha(_ session: NETunnelProviderSession) {
+        guard let msg = "captcha".data(using: .utf8) else { return }
+        try? session.sendProviderMessage(msg) { [weak self] data in
+            let state = Self.decodeCaptcha(data)
+            Task { @MainActor in
+                self?.captchaURL = state.url.isEmpty ? nil : state.url
+                self?.captchaReason = state.reason
+                self?.captchaRequestID = state.requestID
+            }
+        }
+    }
+
+    private func pullRemoteCaptcha(_ session: NETunnelProviderSession) {
+        guard let msg = "remotecaptcha".data(using: .utf8) else { return }
+        try? session.sendProviderMessage(msg) { [weak self] data in
+            let state = Self.decodeCaptcha(data)
+            Task { @MainActor in
+                self?.remoteCaptchaURL = state.url.isEmpty ? nil : state.url
+                self?.remoteCaptchaReason = state.reason
+                self?.remoteCaptchaRequestID = state.requestID
+                self?.remoteCaptchaProxy = state.proxy
+            }
+        }
+    }
+
+    private struct CaptchaState: Decodable {
+        var url = ""
+        var reason = ""
+        var requestID = ""
+        var proxy = ""
+
+        enum CodingKeys: String, CodingKey {
+            case url, reason, requestID = "request_id", proxy
+        }
+    }
+
+    private static func decodeCaptcha(_ data: Data?) -> CaptchaState {
+        guard let data else { return CaptchaState() }
+        if let state = try? JSONDecoder().decode(CaptchaState.self, from: data) {
+            return state
+        }
+        return CaptchaState(url: String(data: data, encoding: .utf8) ?? "")
+    }
+
+    /// Отдаёт узлу куки, добытые через туннель (проверка пройдена с его адреса).
+    func offerCaptchaCookies(_ header: String) {
+        guard let session = activeSession,
+              let msg = "offer:\(header)".data(using: .utf8) else { return }
+        try? session.sendProviderMessage(msg) { [weak self] data in
+            let n = data.flatMap { String(data: $0, encoding: .utf8) } ?? "0"
+            Task { @MainActor in
+                self?.logSink?("[app] offered \(n) cookies to the exit node")
+                self?.remoteCaptchaURL = nil
+                self?.remoteCaptchaReason = ""
+                self?.remoteCaptchaRequestID = ""
+                self?.remoteCaptchaProxy = ""
+            }
+        }
+    }
+
+    /// Relays cookies solved in the app's WebView into the extension's core.
+    func applyCaptchaCookies(_ header: String) {
+        guard let session = activeSession,
+              let msg = "cookies:\(header)".data(using: .utf8) else { return }
+        try? session.sendProviderMessage(msg) { [weak self] data in
+            let n = data.flatMap { String(data: $0, encoding: .utf8) } ?? "0"
+            Task { @MainActor in
+                self?.logSink?("[app] captcha cookies handed to \(n) transport(s)")
+                self?.captchaURL = nil
+                self?.captchaReason = ""
+                self?.captchaRequestID = ""
+            }
+        }
     }
 
     @objc private func statusChanged() { refreshStatus() }
 
     private func refreshStatus() {
-        guard let conn = manager?.connection else { active = false; status = "Disconnected"; return }
+        guard let conn = manager?.connection else {
+            active = false
+            status = "Disconnected"
+            clearCaptchaState()
+            return
+        }
         switch conn.status {
         case .connected:     status = "Connected";     active = true
         case .connecting:    status = "Connecting…";   active = true
@@ -65,5 +227,21 @@ final class VPNController: ObservableObject {
         case .reasserting:   status = "Reasserting…";  active = true
         default:             status = "Disconnected";  active = false
         }
+        if conn.status == .connected || conn.status == .reasserting {
+            startLogPolling()
+        } else {
+            stopLogPolling()
+            clearCaptchaState()
+        }
+    }
+
+    private func clearCaptchaState() {
+        captchaURL = nil
+        captchaReason = ""
+        captchaRequestID = ""
+        remoteCaptchaURL = nil
+        remoteCaptchaReason = ""
+        remoteCaptchaRequestID = ""
+        remoteCaptchaProxy = ""
     }
 }
