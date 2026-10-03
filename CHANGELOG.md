@@ -1,272 +1,177 @@
 # Changelog
 
-All notable changes to the OpenFlux core. Format loosely follows
+All notable changes to OpenFluxAndroid. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-10-01
-
-### Added
-
-- phpbox page (`deploy/phpbox`): opening an exit's URL in a browser shows a
-  status page (OpenFlux look, light and dark) instead of silently running:
-  live state, a debug log, Start/Stop, and a check that a node is already
-  running on that target (a heartbeat plus a lock), so a second open or a
-  pinger attaches to the first instead of starting another. Anything that is
-  not a browser (a pinger, curl) runs the node exactly as before, and the
-  old `?url=` / `?room=` addresses are unchanged. The page reads
-  `openflux://` links and draws their QR in the browser with the core's own
-  `share` package compiled to WebAssembly (`cmd/sharewasm`,
-  `deploy/phpbox/build-wasm.sh`), so there is one link parser for every
-  client; the secret in a link never leaves the browser.
-- `deploy/phpbox/build-bundle.sh` builds the upload set from the sources
-  (token in `config.php`, which also works where `putenv` is disabled).
-- Link compatibility tests (`share/compat_test.go`): links written by
-  earlier builds are frozen as literals and must keep reading, including how
-  a link is mangled by chats and terminals, unknown JSON fields, and the
-  stability of the error codes.
-
-- phpbox self-renewing tunnel (`&chain=1`, what the page asks for): before a
-  generation ends it starts the next one with a request to its own host; the
-  new one joins, takes every new stream, and the old one drains the streams
-  it has. A stream goes to exactly one generation (an atomic `mkdir` marker
-  decides while both are up). `a=stop` ends the whole chain.
-- `--mode=stream` logs like the packet modes: `-d` one line per mux frame
-  (`[STREAM] -> 526 bytes - stream 7 DATA`), `-dd` operational logs (streams
-  opening and closing, a busy carrier), `-ddd` hexdumps of DATA payloads.
-  Until now the level was set after the stream branch had returned, so none
-  of it showed.
-
-- Stream mode is now a library (`streamproxy`: carrier -> mux -> SOCKS5 and an
-  optional HTTP proxy, with counters) used by `--mode=stream` and, next, the
-  mobile bridges; `--mode=stream` also takes `--http-proxy` and `--ipc-socket`.
-- `openflux://` links and QR codes can name the stream mode (`share.Config.Mode`,
-  `"stream"`): one carrier (cups.online or Mail.ru: the two the PHP exit has ports for), no session, no secret.
-  Links without a mode are the classic tunnel as before; codes `unknown_mode`,
-  `stream_transport`, `stream_one_transport`, `stream_plain_only`.
-- phpbox flow control: windows per stream (256 KB) and over all streams (512 KB)
-  with ACK frames, agreed in OPEN (`host:port\0fc` / OPEN_OK `fc`), so old clients
-  and exits are unaffected. Without it a saturated carrier queue buried small
-  frames: over Mail.ru, four parallel downloads starved new TLS handshakes and
-  uploads for minutes. With it (same test): 60 of 60 handshakes complete while four
-  8 MB downloads run, and a 4 MB upload takes 33 s instead of timing out.
-
-- Own node without a server: `provision/phphost` puts the PHP exit on any web
-  host over FTP and checks that it runs. `probe` finds the web folder (also
-  a level or two down: `domains/<site>/public_html`, `www/<site>`) and
-  whether it is writable, `deploy` uploads the bundle embedded in the core
-  (`deploy/phpbox`, with the link parser as WebAssembly), keeps the token of an
-  earlier install and checks file sizes, `check` asks the site (passing the
-  iFastNet-style AES browser check in plain Go, so no browser is needed),
-  `start` runs the node and waits for it, plus `stop`, `node`, `newRoom`, `link`,
-  `remove`. Answers are codes (`ftp_login`, `ftp_no_webroot`, `site_antibot`,
-  `php_missing`, ...), never text. One dispatcher, `phphost.Call`, serves the
-  desktop wizard (`--node-wizard`, methods `php.*`, with progress lines), the
-  Android bridge (`PhpCall`, `PhpProgress`, `PhpCancel`) and the iOS C API
-  (`OpenFluxPhpCall`). The node answers `a=ping` for it.
-- Android and iOS start the stream mode: `StartStreamProxy` /
-  `OpenFluxStartStreamClient` (SOCKS5 with the usual auth and bypass list).
-- The node's page shows the link and QR code apps scan for that node (made by
-  the core as a stream-mode `openflux://` link).
-
-- Stream mode as a full tunnel (`tunnel.StreamNet`): the device's IP packets
-  (utun/Wintun, Android VpnService, an iOS packet tunnel) go into a local
-  stack that opens one mux stream per TCP connection. DNS is answered on the
-  device with fake addresses (198.18.0.0/16) and the name is opened at the exit,
-  so nothing is resolved locally; TCP on ports 80/443 only, QUIC, other UDP
-  and IPv6 are dropped and apps fall back to TCP. It is a `transport.Transport`,
-  so every packet client runs on it unchanged: `--mode=stream --inbound=tun`,
-  `mobile.StartStreamPacket`, `OpenFluxStartStreamPacketTunnel`.
+## [2.2.0] - 2026-10-01
 
 ### Fixed
 
-- The hosting install no longer fails when the host cuts a transfer short.
-  InfinityFree's Pure-FTPd aborted the 2 MB link parser part way through over a
-  TLS data channel (`451 Transfer aborted`), which failed the whole install;
-  the same files went up whole in plain FTP. Each file is now sent again (up to
-  four tries, reconnecting between them); with TLS `auto`, two failures over a
-  TLS data channel go on in plain FTP, as a host with no TLS would have, and the
-  reported security becomes `none`; the link parser is optional, so a host that
-  will not take it still gets a working node. `provision/phphost` also gained a
-  `page` call (the node's control-panel address, `auto=0` so opening it only
-  looks) and checks that a chosen token is 8–64 of `A–Z a–z 0–9 - _`.
+- «Без сервера»: the node now stays up on any host and keeps the tunnel going
+  across its generations, and the install no longer fails when the host cuts a
+  transfer short (InfinityFree's FTP aborted the link parser part way): a file is
+  sent again, and `auto` goes on in plain FTP after it keeps failing over TLS.
+  The wizard also adds a node already on the hosting from its site and access key
+  (no FTP), takes a key of your own on an FTP install, opens the node's panel in
+  the browser, and shows which generation serves («работает · поколение N»).
+  Bumps `OpenFlux` to
+  [`d245db7`](https://github.com/p1neappleXpress/OpenFlux/commit/d245db7) and
+  `shared` to
+  [`98572e2`](https://github.com/p1neappleXpress/OpenFluxClientShared/commit/98572e2).
 
-- The mode-without-a-server node now survives any host's limits and keeps the
-  tunnel up across generations, found on a local emulation of a free host
-  (Apache + PHP-FPM, a 60 s CPU cap, the host's disabled functions, a hidden
-  wall-clock kill):
-  - a disabled `set_time_limit` / `ignore_user_abort` / `getenv` / `getmypid`
-    ended the node at once under PHP 8 (calling a disabled function is a fatal
-    error); every such call is now guarded, and the installer's `ping` lists
-    what the host has taken away.
-  - a generation hands over to its successor early and consistently (about two
-    thirds of the known limit, never later than 45 s) instead of reaching for a
-    longer run: on a host whose real limit we have not seen, aiming high got a
-    generation killed before it had started a successor, and the chain broke.
-    A CPU or wall limit the node has actually hit lowers the handover further.
-  - a successor takes new streams only once its carrier link has stayed up a few
-    seconds (a Mail.ru document drops the first connections right after they
-    join, and streams handed over in that moment were lost); the client re-asks
-    an unanswered OPEN and the exit answers a repeated one without dialing twice.
-  - over cups.online the node no longer slept between messages inside its loop
-    (which stalled new connections under a download) and sends only as fast as
-    the server confirms, so the server does not drop the link; two generations
-    sharing one room no longer corrupt each other's data.
-  - the status page restarts a node that ended on its own while the page is open.
-- `--mode=stream` without `--inbound` is SOCKS5 again on every OS (0.3.0 took
-  the macOS client to utun, which needs root); the Desktop app names
-  `--inbound=socks5` for a proxy profile.
+### Added
 
+- With carriers at equal top priority the badge and «Сейчас через» name all of
+  them ("Board + Volga 2"), as the core spreads traffic over the whole group.
 
-- phpbox chain mode did not renew on real hosts: the successor was started by a
-  request its predecessor closed at once, the node wrote its first lines (`joined
-  ...`) into that closed connection, and on hosts where `ignore_user_abort` does not
-  hold PHP ends the script at such a write, so every successor died right after
-  joining and the tunnel needed a manual restart at each cap. A successor now writes
-  nothing to its response (a first run only its opening lines); the request that
-  starts it also reads a quick answer (a redirect, the host's browser check, an
-  error page), logs it, and a retry tries the other of http/https.
+- «Без сервера»: a new profile mode where the exit is a small PHP program on an
+  ordinary web hosting (free or paid, any with PHP and FTP/FTPS) instead of your
+  own server. The wizard (Профили → «Без сервера») takes the FTP data and the
+  site's address, creates a cups.online room (or takes a Mail.ru document),
+  uploads the node, checks that the site runs it, starts it and connects
+  through it before saving the profile. Works as the system-wide VPN or as a
+  local SOCKS5 proxy; no key to keep, TCP on ports 80 and 443 only. The node
+  renews itself while it is used, and connecting a profile made this way first
+  asks its node to run when the hosting is reachable. Its `openflux://` link and
+  QR carry the mode (never the node's token).
 
-- Mail.ru transport dropped data under load: the server batches several
-  cursor entries into one message, and only the first was read; a message
-  that merely mentioned a peer's keep-alive was dropped whole. Every entry
-  is delivered now, in order (`cursorPayloads`).
-- Stream client: `Mux.send` ignored the carrier's "write queue full" and
-  dropped the frame, which corrupts the stream (a lost byte inside a TLS
-  record fails the handshake). Sends wait with backoff, for up to 15 s, and
-  report an error instead of losing data; `conn.Write` passes it on.
-- phpbox WebSocket client: a frame arriving in pieces (a 22 KB message on a
-  slow link) was cut short and desynchronised the stream; frames already in
-  PHP's TLS buffer were not seen by `stream_select`; fragmented messages
-  were not reassembled; a closed link was indistinguishable from a timeout,
-  so a node stayed deaf after the server dropped it. Reading is buffered,
-  fragments are reassembled, and the mux reconnects (with backoff).
-- phpbox mux: when a run ends, the client is told (CLOSE) about the streams
-  that end with it; streams idle for 300 s are closed (a lost CLOSE no
-  longer leaks a socket); a destination with several addresses is retried on
-  the next one when the first does not answer.
+- «Своя нода»: a new channel is no longer Yandex-only. Step 2 picks any mix
+  of a Yandex document (your own link), a Mail.ru public document and
+  cups.online rooms (created automatically), with direct always on as the
+  backup; the link and the saved profile carry all of them.
+- «Автообновление ядра» on the plan step (on by default): the server's
+  `openflux-node-update.timer` checks the newest `node-v*` release every
+  6 hours, verifies it against the release's `node-install.sh` and
+  `SHA256SUMS`, restarts the channels and rolls back if one does not stay
+  up.
 
 ### Changed
 
-- phpbox mux: destinations are dialed asynchronously (a slow one no longer
-  stalls the others), writes to a full destination are queued instead of
-  dropped, and the frame buffer is consumed by offset.
+- The node wizard no longer signs in to Yandex: the document step takes
+  the link of a document you created, and the node gets no account
+  cookies. Solving a captcha on the phone, or for a node through the
+  phone, works as before.
+- The node's `node-install.sh` is tested on Ubuntu 20.04–24.04, Debian
+  12–13, Rocky 9, Alma 8, Fedora 42, Arch and openSUSE Leap 15.6; on the
+  server `node-install.sh list` shows the channels, `remove <channel>`
+  deletes one and `uninstall` removes the node completely.
+- Bumps `OpenFlux` to [`39b3356`](https://github.com/p1neappleXpress/OpenFlux/commit/39b335655da147f87271c9ebe43e799d14977e9b)
+  and `shared` to [`383c2de`](https://github.com/p1neappleXpress/OpenFluxClientShared/commit/383c2de303dc0a568739a7020e2dec17285de558).
 
-- The node wizard (`--node-wizard`, `mobile.Node*`) lets a new channel use
-  any mix of a Yandex document, a Mail.ru public document and cups.online
-  rooms besides direct (`provision.ChannelTransport`); the rooms are created
-  by the app (`cupsonline.CreateRoomList`) so the node keeps them, and its
-  link, across restarts. `provision.ShareLink` builds the link from the same
-  priorities and encryption context `node-install.sh` writes to node.conf.
-- `node-install.sh update` and the optional `openflux-node-update.timer`:
-  the node moves itself to the newest `node-v*` release, verified against
-  that release's `node-install.sh` and `SHA256SUMS`, and rolls back if a
-  channel does not stay up. An app with an older pinned script no longer
-  downgrades a server the updater has moved on.
+## [2.1.0] - 2026-09-28
 
-## [0.2.0] - 2026-09-28
+### Changed
 
-Every client now behaves alike: peers of different builds and modes find
-each other instead of dropping every packet in silence. The node wizard
-(desktop and Android) installs this core as `node-v1.1.0`.
-
-### Added
-
-- Classic compatibility inside the Session (`PROTOCOL_NEGOTIATION.md`):
-  a classic setup with a key (`--transport=X`, the apps' classic profiles)
-  runs a Session and speaks classic to an exit that does not answer the
-  handshake, switching once it does; a classic-configured exit serves
-  classic and Session clients. `--negotiate` stays strict; exits configured
-  as a Session (wizard, `.conf`, `--transports`) serve Session clients only.
-- Codec fallback: the classic codec decodes batch-v2 and legacy frames,
-  sends what the peer sends, and the client tries the other framing when
-  the peer is silent. `--codec` is a preference now, not a requirement.
-- KDF context fallback: one rule for the context (`transport.KDFContexts`)
-  and alternates for what other builds derive; a record that fails under
-  the current keys is tried under them, the exit answers under the
-  client's context, a silent client cycles through them.
-- `mobile/ios`: the iOS C library (`build_ios.sh`) on package `mobile`,
-  replacing the root `export_ios*.go`: the calls the iOS app makes, plus
-  Session profiles (`OpenFluxShareDecode` returns one ready to start),
-  mode and captcha calls. An app that links this core as a submodule gets
-  the same Session, links and fallbacks as Android.
-- `mobile`: `ShareSessionSpecs`, `SetInitialCookies`, `SetLowMemory`
-  (Volga's new `SlimVolgaConfig` for the iOS extension), `ReadTimeout`,
-  `ConnectionMode`.
-- Links are read and made by the core only. `share.Read` / `share.Make`
-  answer every entry point with the same JSON (`--parse-link`, new
-  `--make-link`, `mobile.ReadShareLink` / `MakeShareLink`, the iOS
-  `OpenFluxShareDecode` / `OpenFluxShareEncode`): the configuration and
-  its context, the link, or an error `code` (and `param`) that the apps
-  put in their own words. `share.Make` normalizes what apps spell
-  differently (the default codec is left out, an encrypted link always
-  names its context, by the one rule when not given), so one
-  configuration gives one link on every client; the node wizard's link,
-  desktop and Android, comes from one `share.NodeConfig`.
-- Logs a user can act on without `-dd`: key or context mismatch, the peer
-  running the other layering, codec and context fallbacks, a second client
-  taking over the exit, carriers failing to start, documents dropping, and
-  a diagnosis when the handshake does not complete.
+- Share links are read and made by the core, the way every client does:
+  bumps `OpenFlux` to [`2ec01a5`](https://github.com/p1neappleXpress/OpenFlux/commit/2ec01a5) (core 0.2.0) and `shared` to
+  [`ae5e59a`](https://github.com/p1neappleXpress/OpenFluxClientShared/commit/ae5e59a).
+  - A link that picked up line breaks, spaces, non-breaking or zero-width
+    characters, padding or the standard base64 alphabet on the way imports,
+    as on iOS, instead of «Ссылка повреждена».
+  - The same profile makes the same link on Desktop, Android and iOS; the
+    core names the encryption context of a Session link, the app no longer
+    derives it.
+  - A refused link says why: not a link, cut short, letters changed case,
+    unknown transport, key too short, and so on.
+  - The node wizard installs `node-v1.1.0`, the node build of core 0.2.0.
+- The node wizard's document step takes the link of a document you
+  created; the button that signed in to Yandex and created one is gone.
+- The release notes show this changelog.
 
 ### Fixed
 
-- A classic cupsonline client given the rooms as `--url` derived another
-  key than the exit that created them: nothing got through.
-- boards sent engine.io pings from the client, which an EIO=4 server
-  answers by closing the socket: the board dropped every 20 seconds.
-- A Session client's cupsonline carrier was built as an exit: with no or
-  dead rooms it created rooms of its own and waited in them.
-- openflux:// links: base64 padding, the standard alphabet, whitespace and
-  line breaks are accepted; secrets are counted in characters as Kotlin
-  counts them, not bytes.
-- Carrier names that differ between the two sides no longer break cookie
-  exchange and exit checks (messages carry the document URL).
-- yandex / mailru: a socket whose keepalive failed is closed so the
-  reconnect runs; writes are bounded.
-- `utils.Infof` reaches the apps' log screens.
-- A Session stopped each carrier twice.
+- Clients and nodes built from different trees now connect: bumps `OpenFlux`
+  to [`f8f3476`](https://github.com/p1neappleXpress/OpenFlux/commit/f8f34767a5732febd5965ac6cf95bad51b70cf99).
+  - A classic profile with a key runs the Session and falls back to the
+    classic layering for a classic or older node, on the same carrier; a
+    node set up as classic serves both kinds of client. Nodes set up for
+    the Session stay Session-only.
+  - The encryption context follows one rule everywhere, and a client whose
+    context differs from the node's finds the node's instead of timing out
+    (classic cups.online was the common case).
+  - The classic codec (batched or legacy) is no longer a hard requirement:
+    both are accepted and the client switches when the node does not answer.
+  - boards no longer drops the connection every 20 seconds; yandex and
+    mailru reconnect when their socket dies.
+  - The log explains a failed handshake: wrong key, a node in the other
+    mode, the codec or context picked, a connection taken over by another
+    client.
 
-## [0.1.0] - 2026-09-27
-
-First release from the current `main` line (encrypted-logging + the
-maintainer's multi-transport work folded together) and the first cut by
-`release.yml` instead of a manual build.
-
-### Added
-
-- `mobile/`: the Android/iOS gomobile bridge now lives in this repository
-  (moved from `meepo161/openfluxfork`, full history and authorship
-  preserved), so building the mobile clients needs only this checkout.
-- `.github/workflows/release.yml`: a `v*` tag cross-compiles the CLI for
-  Linux (amd64/arm/arm64), Windows (386/amd64/arm64) and macOS
-  (amd64/arm64) and publishes it with `SHA256SUMS.txt`. Replaces the
-  ad-hoc manually-built `0.0.x` releases.
-- `deploy/node-install.sh` now downloads the exit-node core from this
-  repository's own `node-v*` releases instead of `meepo161/openfluxfork`;
-  `provision/pin.go`'s pinned script commit/hash points here too.
+## [2.0.1] - 2026-09-27
 
 ### Fixed
 
-- `main.go`: bench-send/bench-sink never resolved to the exit-side session
-  role under `--negotiate`, so a negotiated session between two bench
-  processes hung retrying the handshake and derived encryption keys in the
-  same direction on both sides instead of swapped.
-- `main.go`: the startup banner still printed the project's pre-rename
-  name (`=== Universal Bypass Tool ===`) instead of `=== OpenFlux ===`.
-- `.github/workflows/node-release.yml`: the pinned Go version (1.26.8) had
-  drifted from `go.mod` (1.26.4), so its "reproducible" build didn't
-  actually reproduce the hashes `deploy/node-install.sh` expects.
+- An exit node deployed by the node wizard never actually connected: a
+  `.conf`-only `Role = exit` (every node-wizard deployment) left the core's
+  internal exit/client flag stuck at its pre-config value, so the exit
+  never answered the handshake and crash-looped instead. Bumps `OpenFlux`
+  to [`e8f735a`](https://github.com/p1neappleXpress/OpenFlux/commit/e8f735a98c1ba9e091956416fde5c5ef92d3cd66).
+- The startup log always printed `Transport: yandex` for session/multi-transport
+  profiles regardless of which transports were actually configured (a stale
+  flag default, not a functional bug — the correct transports ran either
+  way). Now prints the actual list, e.g. `Transport: boards, direct (session)`.
+- Cups.online profiles with no room codes couldn't be saved or connected;
+  the node generates its own rooms, so an empty value is valid for this
+  transport only.
+- An exit node always listened for Direct (TCP on `0.0.0.0:<port>`) and put
+  it into the clients' link, even when the profile had no Direct transport.
+  It now listens only when the profile has Direct, at that transport's
+  priority ([#11](https://github.com/p1neappleXpress/OpenFluxAndroid/pull/11)).
+- A phone exit on cups.online without room codes put cups.online into its
+  link with no rooms, so clients could not join; the link now carries the
+  rooms the node created ([OpenFlux#123](https://github.com/p1neappleXpress/OpenFlux/pull/123)).
+
+### Added
+
+- Settings → Ядро OpenFlux: a core log-level picker (Выкл / -d / -dd /
+  -ddd, the core's `--debug=N`) in place of the "Подробный журнал ядра"
+  switch. The embedded core used to run at -dd on every connect whatever
+  the switch said — formatting a log line for every packet — and the
+  switch only hid those lines from the log view; the level now reaches the
+  core itself ([OpenFlux#121](https://github.com/p1neappleXpress/OpenFlux/pull/121)).
+  The default is Выкл: choose -dd to see transport errors, handshakes and
+  the encryption (KDF) context.
+- Node-wizard deployment logging: every SSH/RPC call and the wizard's own
+  step narration now goes to the Logs tab, so a stuck deployment is
+  diagnosable without a debugger.
+- Home → Подключение: a "Сейчас через" row for profiles with several
+  transports, and carriers named as in the app ("Board 2", not `boards-2`)
+  there and in the "через …" badge.
+
+## [2.0.0] - 2026-09-27
+
+First release of this app. Replaces the previous single-transport native
+app (tun2socks + pdnsd JNI, preserved at the
+[`legacy-native-app`](../../tree/legacy-native-app) tag) with the Compose
+Multiplatform app originally built by [@meepo161](https://github.com/meepo161)
+in [OpenFluxClient](https://github.com/meepo161/OpenFluxClient), moved here
+with his agreement.
+
+### Added
+
+- System VPN or local SOCKS5.
+- Multi-transport sessions with automatic failover and priority-based
+  switching (including `direct`).
+- AES-256-GCM session encryption.
+- SmartCaptcha and login handling in a built-in browser, including a
+  transport check on the exit node, passed through the tunnel from its
+  own address.
+- A node-deployment wizard: install an exit node on your own VPS over SSH
+  from the app.
+- `shared/` and `OpenFlux/` as git submodules ([OpenFluxClientShared](https://github.com/p1neappleXpress/OpenFluxClientShared)
+  and the [OpenFlux](https://github.com/p1neappleXpress/OpenFlux) core), so
+  this app always builds against one pinned, single copy of each instead of
+  a vendored one.
+- `.github/workflows/release.yml`: a `v*` tag builds and signs a release
+  APK and publishes it here.
 
 ### Credits
 
-`androidApp`/`desktopApp`/`shared` for [OpenFluxAndroid](https://github.com/p1neappleXpress/OpenFluxAndroid)
-and [OpenFluxDesktop](https://github.com/p1neappleXpress/OpenFluxDesktop) now
-run the Compose Multiplatform app built by [@meepo161](https://github.com/meepo161)
-in [OpenFluxClient](https://github.com/meepo161/OpenFluxClient), moved into
-those repositories with his agreement.
-
-## [0.0.1] - [0.0.5]
-
-Manually built and published cross-platform CLI binaries, before this
-CHANGELOG and the automated release workflow existed.
+- [@meepo161](https://github.com/meepo161) — this app's UI and logic.
+- [@p1neappleXpress](https://github.com/p1neappleXpress) — the OpenFlux
+  core it embeds.
+- [@damnurmum](https://github.com/damnurmum) — `openflux://` links/QR codes
+  and the cups.online transport in the core, which this app's share and
+  scan screens build on.
