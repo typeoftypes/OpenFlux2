@@ -242,6 +242,40 @@ jobs:
               fi
             done
 
+      # The Go core is built into a static library and copied into the Xcode
+      # project's Lib/ directory, which project.yml references from both
+      # targets. It must exist before XcodeGen validates the manifest.
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Build liboflux.a (Go core)
+        env:
+          IOS_PATH: ${{ steps.params.outputs.ios_path }}
+        run: |
+          set -e
+          # build_ios.sh lives at the repository root and writes output/ios/.
+          if [ ! -f build_ios.sh ]; then
+            echo "::error::build_ios.sh not found in $PWD"
+            exit 1
+          fi
+          chmod +x build_ios.sh
+          ./build_ios.sh
+
+          if [ ! -f output/ios/liboflux.a ]; then
+            echo "::error::build_ios.sh did not produce output/ios/liboflux.a"
+            ls -la output/ios/ 2>/dev/null || true
+            exit 1
+          fi
+
+          # project.yml declares Lib/liboflux.a as a framework and Lib as a
+          # source path for both targets, so both must be present.
+          mkdir -p "$IOS_PATH/Lib"
+          cp output/ios/liboflux.a "$IOS_PATH/Lib/"
+          cp output/ios/liboflux.h "$IOS_PATH/Lib/" 2>/dev/null || true
+          ls -la "$IOS_PATH/Lib/"
+
       - name: Generate Xcode project (XcodeGen)
         env:
           IOS_PATH: ${{ steps.params.outputs.ios_path }}
