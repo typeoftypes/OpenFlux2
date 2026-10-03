@@ -80,7 +80,6 @@ jobs:
       - name: Build the core (gomobile)
         run: bash scripts/build-android-core.sh .
 
-      # Если shared/ пустая — удалите этот шаг.
       - name: Tests
         run: ./gradlew --no-daemon :shared:jvmTest
 
@@ -122,6 +121,27 @@ jobs:
           name: OpenFluxAndroid-${{ steps.version.outputs.value }}
           path: dist/*
           if-no-files-found: error
+
+      - name: Deploy APK to server
+        if: success() && secrets.DEPLOY_SSH_KEY != ''
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          TARGET: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          set -e
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          target="${TARGET:-/root/github/OpenFlux/dist}"
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" "mkdir -p '$target'"
+          rsync -avz \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            dist/*.apk dist/SHA256SUMS.txt \
+            "$USER@$HOST:$target/"
+          echo "Deployed to $USER@$HOST:$target/"
 
       - name: Publish release
         if: inputs.publish
