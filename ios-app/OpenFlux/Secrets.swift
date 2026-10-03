@@ -56,7 +56,12 @@ enum Secrets {
         var add = q
         add[kSecValueData as String] = data
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+        let status = SecItemAdd(add as CFDictionary, nil)
+        if status == errSecSuccess { return true }
+        if status == errSecDuplicateItem {
+            return SecItemUpdate(q as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecSuccess
+        }
+        return false
     }
 
     // MARK: - Ключ прямого канала
@@ -153,7 +158,13 @@ enum Secrets {
             // tunnel reconnects on its own after a network change), so this is
             // the after-first-unlock class rather than WhenUnlocked.
             add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-            return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+            let addStatus = SecItemAdd(add as CFDictionary, nil)
+            if addStatus == errSecSuccess { return true }
+            // Another save may have created the item between Update and Add.
+            if addStatus == errSecDuplicateItem {
+                return SecItemUpdate(q as CFDictionary, attrs as CFDictionary) == errSecSuccess
+            }
+            return false
         }
         return false
     }
