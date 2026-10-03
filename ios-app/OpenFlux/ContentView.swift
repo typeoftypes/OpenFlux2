@@ -703,7 +703,6 @@ struct ProfileEditorView: View {
     @State private var nodeAddr = ""
     @State private var directKey = ""
     @State private var importMsg: String?
-    @State private var saveError: String?
     @State private var showScanner = false
 
     private var transport: TransportKind { TransportKind(rawValue: transportRaw) ?? .yandex }
@@ -793,9 +792,6 @@ struct ProfileEditorView: View {
                         .font(.caption2).foregroundColor(.secondary)
                     if let m = importMsg {
                         Text(m).font(.caption2).foregroundColor(.secondary)
-                    }
-                    if let error = saveError {
-                        Text(error).font(.caption2).foregroundColor(.red)
                     }
                 }
             }
@@ -947,21 +943,6 @@ struct ProfileEditorView: View {
     }
 
     private func save() {
-        saveError = nil
-        let key = encryptionKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let direct = directKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !key.isEmpty && key.count < 16 {
-            saveError = "Общий секрет должен содержать минимум 16 символов."
-            return
-        }
-        if transport == .direct && key.isEmpty {
-            saveError = "Для прямого TCP необходимо указать общий секрет."
-            return
-        }
-        if !direct.isEmpty && direct.count < 16 {
-            saveError = "Ключ прямого канала должен содержать минимум 16 символов."
-            return
-        }
         var url = ""
         switch transport {
         case .yandex:
@@ -975,14 +956,8 @@ struct ProfileEditorView: View {
         }
         // The secret goes to the shared Keychain, never into the profile record
         // (which lives in plain UserDefaults). An emptied field removes it.
-        guard Secrets.setEncryptionKey(key, for: id) else {
-            saveError = "Не удалось сохранить общий секрет в Keychain. Проверьте доступ к общей группе Keychain и подпись приложения."
-            return
-        }
-        guard Secrets.setDirectKey(direct, for: id) else {
-            saveError = "Не удалось сохранить ключ прямого канала в Keychain."
-            return
-        }
+        Secrets.setEncryptionKey(encryptionKey, for: id)
+        Secrets.setDirectKey(directKey, for: id)
         onSave(Profile(id: id, name: name.trimmingCharacters(in: .whitespaces),
                        transport: transportRaw, url: url,
                        maxToken: maxToken, maxUid: maxUid,

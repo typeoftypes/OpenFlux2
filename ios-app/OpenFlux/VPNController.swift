@@ -94,13 +94,8 @@ final class VPNController: ObservableObject {
     /// Document URL waiting on an interactive captcha inside the extension, or
     /// nil. Polled over the same IPC channel as the log.
     @Published var captchaURL: String?
-    @Published var captchaReason = ""
-    @Published var captchaRequestID = ""
     /// Проверка в интересах узла: проходить НЕ отключая туннель.
     @Published var remoteCaptchaURL: String?
-    @Published var remoteCaptchaReason = ""
-    @Published var remoteCaptchaRequestID = ""
-    @Published var remoteCaptchaProxy = ""
 
     private var logTimer: Timer?
 
@@ -139,11 +134,9 @@ final class VPNController: ObservableObject {
     private func pullCaptcha(_ session: NETunnelProviderSession) {
         guard let msg = "captcha".data(using: .utf8) else { return }
         try? session.sendProviderMessage(msg) { [weak self] data in
-            let state = Self.decodeCaptcha(data)
+            let url = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
             Task { @MainActor in
-                self?.captchaURL = state.url.isEmpty ? nil : state.url
-                self?.captchaReason = state.reason
-                self?.captchaRequestID = state.requestID
+                self?.captchaURL = url.isEmpty ? nil : url
             }
         }
     }
@@ -151,33 +144,9 @@ final class VPNController: ObservableObject {
     private func pullRemoteCaptcha(_ session: NETunnelProviderSession) {
         guard let msg = "remotecaptcha".data(using: .utf8) else { return }
         try? session.sendProviderMessage(msg) { [weak self] data in
-            let state = Self.decodeCaptcha(data)
-            Task { @MainActor in
-                self?.remoteCaptchaURL = state.url.isEmpty ? nil : state.url
-                self?.remoteCaptchaReason = state.reason
-                self?.remoteCaptchaRequestID = state.requestID
-                self?.remoteCaptchaProxy = state.proxy
-            }
+            let url = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            Task { @MainActor in self?.remoteCaptchaURL = url.isEmpty ? nil : url }
         }
-    }
-
-    private struct CaptchaState: Decodable {
-        var url = ""
-        var reason = ""
-        var requestID = ""
-        var proxy = ""
-
-        enum CodingKeys: String, CodingKey {
-            case url, reason, requestID = "request_id", proxy
-        }
-    }
-
-    private static func decodeCaptcha(_ data: Data?) -> CaptchaState {
-        guard let data else { return CaptchaState() }
-        if let state = try? JSONDecoder().decode(CaptchaState.self, from: data) {
-            return state
-        }
-        return CaptchaState(url: String(data: data, encoding: .utf8) ?? "")
     }
 
     /// Отдаёт узлу куки, добытые через туннель (проверка пройдена с его адреса).
@@ -189,9 +158,6 @@ final class VPNController: ObservableObject {
             Task { @MainActor in
                 self?.logSink?("[app] offered \(n) cookies to the exit node")
                 self?.remoteCaptchaURL = nil
-                self?.remoteCaptchaReason = ""
-                self?.remoteCaptchaRequestID = ""
-                self?.remoteCaptchaProxy = ""
             }
         }
     }
@@ -205,8 +171,6 @@ final class VPNController: ObservableObject {
             Task { @MainActor in
                 self?.logSink?("[app] captcha cookies handed to \(n) transport(s)")
                 self?.captchaURL = nil
-                self?.captchaReason = ""
-                self?.captchaRequestID = ""
             }
         }
     }
@@ -214,12 +178,7 @@ final class VPNController: ObservableObject {
     @objc private func statusChanged() { refreshStatus() }
 
     private func refreshStatus() {
-        guard let conn = manager?.connection else {
-            active = false
-            status = "Disconnected"
-            clearCaptchaState()
-            return
-        }
+        guard let conn = manager?.connection else { active = false; status = "Disconnected"; return }
         switch conn.status {
         case .connected:     status = "Connected";     active = true
         case .connecting:    status = "Connecting…";   active = true
@@ -231,17 +190,6 @@ final class VPNController: ObservableObject {
             startLogPolling()
         } else {
             stopLogPolling()
-            clearCaptchaState()
         }
-    }
-
-    private func clearCaptchaState() {
-        captchaURL = nil
-        captchaReason = ""
-        captchaRequestID = ""
-        remoteCaptchaURL = nil
-        remoteCaptchaReason = ""
-        remoteCaptchaRequestID = ""
-        remoteCaptchaProxy = ""
     }
 }

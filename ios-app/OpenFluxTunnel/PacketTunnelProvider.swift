@@ -317,26 +317,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // the transport. The app drives the WebView and relays through here.
         case "remotecaptcha":
             var url = ""
-            var reason = ""
-            var requestID = ""
-            var proxy = ""
             if let c = OpenFluxRemoteCaptchaPending() {
                 url = String(cString: c)
                 OpenFluxFreeString(c)
             }
-            if let c = OpenFluxCaptchaReason() {
-                reason = String(cString: c)
-                OpenFluxFreeString(c)
-            }
-            if let c = OpenFluxCaptchaRequestID() {
-                requestID = String(cString: c)
-                OpenFluxFreeString(c)
-            }
-            if let c = OpenFluxRemoteCaptchaProxy() {
-                proxy = String(cString: c)
-                OpenFluxFreeString(c)
-            }
-            completionHandler?(captchaJSON(url: url, reason: reason, requestID: requestID, proxy: proxy))
+            completionHandler?(url.data(using: .utf8) ?? Data())
 
         case "captcha":
             var url = ""
@@ -344,17 +329,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 url = String(cString: c)
                 OpenFluxFreeString(c)
             }
-            var reason = ""
-            var requestID = ""
-            if let c = OpenFluxCaptchaReason() {
-                reason = String(cString: c)
-                OpenFluxFreeString(c)
-            }
-            if let c = OpenFluxCaptchaRequestID() {
-                requestID = String(cString: c)
-                OpenFluxFreeString(c)
-            }
-            completionHandler?(captchaJSON(url: url, reason: reason, requestID: requestID, proxy: ""))
+            completionHandler?(url.data(using: .utf8) ?? Data())
 
         default:
             if cmd.hasPrefix("offer:") {
@@ -371,13 +346,6 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             completionHandler?(Data())
         }
-    }
-
-    private func captchaJSON(url: String, reason: String, requestID: String, proxy: String) -> Data {
-        let value: [String: String] = [
-            "url": url, "reason": reason, "request_id": requestID, "proxy": proxy
-        ]
-        return (try? JSONSerialization.data(withJSONObject: value)) ?? Data("{}".utf8)
     }
 
     /// Polls the Go DNS proxy for GeoSite-matched direct IPs and appends them to

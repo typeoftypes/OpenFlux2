@@ -162,24 +162,13 @@ final class TunnelController: ObservableObject {
 
     /// Document URL waiting on an interactive captcha, or nil.
     @Published var captchaURL: String?
-    @Published var captchaReason = ""
-    @Published var captchaRequestID = ""
     /// Проверка, которую надо пройти в интересах УЗЛА: не отключая туннель,
     /// чтобы куки были выданы на его адрес.
     @Published var remoteCaptchaURL: String?
-    @Published var remoteCaptchaReason = ""
-    @Published var remoteCaptchaRequestID = ""
-    @Published var remoteCaptchaProxy = ""
 
     private func pollCaptcha() {
         guard running else {
-            captchaURL = nil
-            remoteCaptchaURL = nil
-            captchaReason = ""
-            captchaRequestID = ""
-            remoteCaptchaReason = ""
-            remoteCaptchaRequestID = ""
-            remoteCaptchaProxy = ""
+            if captchaURL != nil { captchaURL = nil }
             return
         }
         if let c = OpenFluxCaptchaPending() {
@@ -187,43 +176,12 @@ final class TunnelController: ObservableObject {
             OpenFluxFreeString(c)
             let next = s.isEmpty ? nil : s
             if next != captchaURL { captchaURL = next }
-            if next == nil {
-                captchaReason = ""
-                captchaRequestID = ""
-            }
-        }
-        if let c = OpenFluxCaptchaReason() {
-            captchaReason = String(cString: c)
-            OpenFluxFreeString(c)
-        }
-        if let c = OpenFluxCaptchaRequestID() {
-            captchaRequestID = String(cString: c)
-            OpenFluxFreeString(c)
         }
         if let c = OpenFluxRemoteCaptchaPending() {
             let s = String(cString: c)
             OpenFluxFreeString(c)
             let next = s.isEmpty ? nil : s
             if next != remoteCaptchaURL { remoteCaptchaURL = next }
-            if next == nil {
-                remoteCaptchaReason = ""
-                remoteCaptchaRequestID = ""
-                remoteCaptchaProxy = ""
-            }
-        }
-        if let c = OpenFluxCaptchaReason() {
-            let reason = String(cString: c)
-            OpenFluxFreeString(c)
-            if remoteCaptchaURL != nil { remoteCaptchaReason = reason }
-        }
-        if let c = OpenFluxCaptchaRequestID() {
-            let requestID = String(cString: c)
-            OpenFluxFreeString(c)
-            if remoteCaptchaURL != nil { remoteCaptchaRequestID = requestID }
-        }
-        if let c = OpenFluxRemoteCaptchaProxy() {
-            remoteCaptchaProxy = String(cString: c)
-            OpenFluxFreeString(c)
         }
     }
 
@@ -234,9 +192,6 @@ final class TunnelController: ObservableObject {
         }
         appendLog("[app] offered \(n) cookies to the exit node")
         remoteCaptchaURL = nil
-        remoteCaptchaReason = ""
-        remoteCaptchaRequestID = ""
-        remoteCaptchaProxy = ""
     }
 
     /// Hands cookies solved in the WebView to the in-app core.
@@ -246,8 +201,6 @@ final class TunnelController: ObservableObject {
         }
         appendLog("[app] captcha cookies handed to \(n) transport(s)")
         captchaURL = nil
-        captchaReason = ""
-        captchaRequestID = ""
     }
 
     /// Connectivity check WITHOUT the local proxy — used when the system VPN is

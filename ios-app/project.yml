@@ -43,8 +43,8 @@ targets:
           - packet-tunnel-provider
         # Shared with the tunnel extension so the encryption secret lives in the
         # Keychain instead of the VPN provider configuration.
-        com.apple.security.application-groups:
-          - group.com.p1neapplexpress-saharev.openflux
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.p1neapplexpress-saharev.openflux
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.p1neapplexpress-saharev.openflux
@@ -94,8 +94,8 @@ targets:
       properties:
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
-        com.apple.security.application-groups:
-          - group.com.p1neapplexpress-saharev.openflux
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.p1neapplexpress-saharev.openflux
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.p1neapplexpress-saharev.openflux.tunnel
