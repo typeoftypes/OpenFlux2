@@ -123,7 +123,7 @@ jobs:
           if-no-files-found: error
 
       - name: Deploy APK to server
-        if: success() && secrets.DEPLOY_SSH_KEY != ''
+        if: success()
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           HOST: ${{ secrets.DEPLOY_HOST }}
@@ -131,6 +131,10 @@ jobs:
           TARGET: ${{ secrets.DEPLOY_PATH }}
         run: |
           set -e
+          if [ -z "$SSH_KEY" ] || [ -z "$HOST" ] || [ -z "$USER" ]; then
+            echo "Deploy secrets not set — skipping deployment."
+            exit 0
+          fi
           mkdir -p ~/.ssh
           echo "$SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
