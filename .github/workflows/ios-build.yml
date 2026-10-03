@@ -72,11 +72,6 @@ jobs:
     timeout-minutes: 90 # a cold React Native/Expo build on the free runner takes 30-60 minutes
 
     steps:
-- name: Install XcodeGen
-  run: brew install xcodegen
-
-- name: Generate Xcode project
-  run: xcodegen generate
       - name: Checkout repository
         uses: actions/checkout@v7
 
