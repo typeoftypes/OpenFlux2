@@ -72,6 +72,10 @@ var (
 	TCPBufMax     = 64 * 1024 * 1024
 )
 
+var exitCopyBufferPool = sync.Pool{
+	New: func() interface{} { return make([]byte, 256*1024) },
+}
+
 func SetTCPBuffers(s *stack.Stack) {
 	rcv := tcpip.TCPReceiveBufferSizeRangeOption{Min: TCPBufMin, Default: TCPBufDefault, Max: TCPBufMax}
 	if err := s.SetTransportProtocolOption(tcp.ProtocolNumber, &rcv); err != nil {
@@ -161,10 +165,13 @@ func (t *TCPTunnel) setupExitNodeProxy(tunnelNIC tcpip.NICID) {
 	t.gvisorStack.SetTransportProtocolHandler(udp.ProtocolNumber, udpFwd.HandlePacket)
 }
 
-const udpIdleTimeout = 2 * time.Minute
+const (
+	udpIdleTimeout = 2 * time.Minute
+	udpMaxFlows    = 1024
+)
 
 func (t *TCPTunnel) handleExitUDP(r *udp.ForwarderRequest) bool {
-	if t.udpFlows.Add(1) > 256 {
+	if t.udpFlows.Add(1) > udpMaxFlows {
 		t.udpFlows.Add(-1)
 		return true
 	}
@@ -179,7 +186,9 @@ func (t *TCPTunnel) handleExitUDP(r *udp.ForwarderRequest) bool {
 		return true
 	}
 	local := gonet.NewUDPConn(&wq, ep)
-	remote, err := net.DialTimeout("udp", dest, 10*time.Second)
+	// UDP connect does not perform a handshake. A long dial timeout only
+	// consumes a flow slot and delays the client's failure response.
+	remote, err := net.DialTimeout("udp", dest, 2*time.Second)
 	if err != nil {
 		utils.Debugf("[EXIT] UDP dial %s failed: %v", dest, err)
 		local.Close()
@@ -252,13 +261,19 @@ func (t *TCPTunnel) handleExitTCP(r *tcp.ForwarderRequest) {
 		utils.Debugf("[EXIT] %s connected", dest)
 
 		go func() {
-			buf := make([]byte, 256*1024)
-			io.CopyBuffer(remote, local, buf)
+			buf := exitCopyBufferPool.Get().([]byte)
+			defer exitCopyBufferPool.Put(buf)
+			if _, err := io.CopyBuffer(remote, local, buf); err != nil {
+				utils.Debugf("[EXIT] %s local->remote copy: %v", dest, err)
+			}
 			remote.Close()
 			local.Close()
 		}()
-		buf := make([]byte, 256*1024)
-		io.CopyBuffer(local, remote, buf)
+		buf := exitCopyBufferPool.Get().([]byte)
+		defer exitCopyBufferPool.Put(buf)
+		if _, err := io.CopyBuffer(local, remote, buf); err != nil {
+			utils.Debugf("[EXIT] %s remote->local copy: %v", dest, err)
+		}
 		local.Close()
 		remote.Close()
 	})

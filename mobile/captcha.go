@@ -2,6 +2,7 @@ package mobile
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,9 +30,12 @@ var captcha struct {
 	// is passed from the exit's address, and the cookies go to the exit.
 	proxy      string
 	remoteName string
+	requestID  uint64
 	// snooze holds off repeated exit checks the user cancelled.
 	snooze map[string]time.Time
 }
+
+var captchaSequence uint64
 
 // remoteSnooze is how long a cancelled exit check stays quiet; the exit
 // repeats its report every 20-30s while stuck.
@@ -70,6 +74,8 @@ func attachCaptcha(transportType, documentURL string, raw transport.Transport) {
 			captcha.mu.Lock()
 			captcha.url = url
 			captcha.reason = reason
+			captchaSequence++
+			captcha.requestID = captchaSequence
 			captcha.mu.Unlock()
 		})
 	}
@@ -100,6 +106,8 @@ func attachSessionCaptcha(m *manager.Manager, keys map[string]string, proxy *aut
 		appendLog(fmt.Sprintf("[ANDROID] %s: нужна проверка в браузере (%s)", name, reason))
 		captcha.mu.Lock()
 		captcha.url, captcha.reason, captcha.key = url, reason, keys[name]
+		captchaSequence++
+		captcha.requestID = captchaSequence
 		captcha.proxy, captcha.remoteName = "", ""
 		captcha.apply = func(jar map[string]string) error { return m.ApplyCookiesFor(name, jar) }
 		captcha.mu.Unlock()
@@ -125,6 +133,8 @@ func attachSessionCaptcha(m *manager.Manager, keys map[string]string, proxy *aut
 		appendLog(fmt.Sprintf("[ANDROID] Нода: %s требует проверку в браузере (%s)", name, reason))
 		captcha.mu.Lock()
 		captcha.url, captcha.reason, captcha.key = url, reason, ""
+		captchaSequence++
+		captcha.requestID = captchaSequence
 		captcha.proxy, captcha.remoteName = addr, name
 		captcha.apply = func(jar map[string]string) error { return m.OfferCookies(name, jar) }
 		captcha.mu.Unlock()
@@ -162,6 +172,17 @@ func PendingCaptchaReason() string {
 	captcha.mu.Lock()
 	defer captcha.mu.Unlock()
 	return captcha.reason
+}
+
+// PendingCaptchaID identifies the current browser check. Apps can use it to
+// distinguish a replacement request from the same page being polled again.
+func PendingCaptchaID() string {
+	captcha.mu.Lock()
+	defer captcha.mu.Unlock()
+	if captcha.url == "" {
+		return ""
+	}
+	return strconv.FormatUint(captcha.requestID, 10)
 }
 
 // CancelCaptcha clears the pending check without cookies (user gave up).

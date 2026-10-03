@@ -3,8 +3,10 @@ package transport
 import (
 	"encoding/hex"
 	"fmt"
+	"math/rand"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,11 +18,90 @@ import (
 // batch size can be matched to the channel's per-message limits without a
 // rebuild (OPENFLUX_BATCH_BYTES / OPENFLUX_BATCH_COUNT / OPENFLUX_BATCH_LINGER_MS).
 const (
-	defaultMaxBatchBytes = 8192
-	defaultMaxBatchCount = 64
-	defaultLingerMs      = 5
-	batchQueueDepth      = 256 // At most 16 MiB of queued packet data.
+	defaultMaxBatchBytes = 16384
+	defaultMaxBatchCount = 128
+	defaultLingerMs      = 3
+	batchQueueDepth      = 512 // At most 32 MiB of queued packet data.
 )
+
+// Traffic-shaping constants. See batchPad and the batch flag
+// batchFlagPadded: padding rounds small frames up toward a random target so
+// the payload-size distribution stops tracking the tunneled traffic.
+const (
+	defaultJitterMs    = 2
+	defaultPadMinBytes = 0
+	defaultPadMaxBytes = 64
+)
+
+// PadConfig controls traffic shaping of the batched layer. Padding turns the
+// payload-size distribution from a sharp, traffic-correlated signal into a
+// less precise size signal. This does not guarantee resistance to traffic
+// classification. Padding is opt-in and requires updated decoders on BOTH
+// peers: older wire-v2 implementations reject the padding flag.
+type PadConfig struct {
+	Enabled bool
+	Min     int
+	Max     int
+}
+
+// batchPad returns the number of random padding bytes to append to this
+// frame, or 0 when padding is disabled. Small frames get the most padding
+// (they leak the most about the underlying traffic), full-size frames none.
+func batchPad(conf PadConfig, payloadLen int) int {
+	if !conf.Enabled || conf.Max <= 0 {
+		return 0
+	}
+	if payloadLen >= conf.Max {
+		return 0
+	}
+	room := conf.Max - payloadLen
+	if room <= 0 {
+		return 0
+	}
+	lo := conf.Min
+	if lo > room {
+		lo = room
+	}
+	hi := room
+	if hi <= 0 {
+		return 0
+	}
+	n := lo
+	if hi > lo {
+		n += rand.Intn(hi - lo + 1)
+	}
+	return n
+}
+
+// padEnv reads an env-var pair of the form "min,max" (or a single number,
+// taken as max with min 0) and returns the padding configuration it spells.
+func padEnv(name string) PadConfig {
+	v := os.Getenv(name)
+	if v == "" {
+		return PadConfig{Enabled: false}
+	}
+	conf := PadConfig{Enabled: true, Min: defaultPadMinBytes, Max: defaultPadMaxBytes}
+	if i := strings.Index(v, ","); i >= 0 {
+		if n, err := strconv.Atoi(v[:i]); err == nil && n >= 0 {
+			conf.Min = n
+		}
+		if n, err := strconv.Atoi(v[i+1:]); err == nil && n >= 0 {
+			conf.Max = n
+		}
+	} else if n, err := strconv.Atoi(v); err == nil && n > 0 {
+		conf.Max = n
+	}
+	if conf.Max < conf.Min {
+		conf.Min, conf.Max = conf.Max, conf.Min
+	}
+	// The trailer has a uint16 length and the frame has a bounded size.
+	conf.Max = min(conf.Max, 65535)
+	conf.Min = min(conf.Min, conf.Max)
+	if conf.Max <= 0 {
+		conf = PadConfig{Enabled: false}
+	}
+	return conf
+}
 
 // BatchedTransport replaces the old per-packet CompressedTransport. It queues
 // outgoing tunnel packets, coalesces bursts into a single framed+zstd batch per
@@ -39,6 +120,7 @@ type BatchedTransport struct {
 	lingerMs      int
 	maxBatchBytes int
 	maxBatchCount int
+	pad           PadConfig
 
 	running    atomic.Bool
 	lifecycle  sync.Mutex
@@ -66,10 +148,11 @@ func NewBatchedTransport(inner Transport) *BatchedTransport {
 		lingerMs:      envInt("OPENFLUX_BATCH_LINGER_MS", defaultLingerMs),
 		maxBatchBytes: min(envInt("OPENFLUX_BATCH_BYTES", defaultMaxBatchBytes), maxFrameBytes-65537),
 		maxBatchCount: min(envInt("OPENFLUX_BATCH_COUNT", defaultMaxBatchCount), maxFrameRecords-1),
+		pad:           padEnv("OPENFLUX_BATCH_PAD"),
 		stopCh:        make(chan struct{}),
 	}
-	utils.Debugf("[BATCH] created: lingerMs=%d maxBatchBytes=%d maxBatchCount=%d queueCap=%d",
-		b.lingerMs, b.maxBatchBytes, b.maxBatchCount, batchQueueDepth)
+	utils.Debugf("[BATCH] created: lingerMs=%d maxBatchBytes=%d maxBatchCount=%d queueCap=%d padding=%v",
+		b.lingerMs, b.maxBatchBytes, b.maxBatchCount, batchQueueDepth, b.pad)
 	return b
 }
 
@@ -118,8 +201,6 @@ func (b *BatchedTransport) Stop() error {
 // for batching. A full queue returns an explicit error; TCP may retransmit,
 // while UDP callers must treat it as datagram loss.
 func (b *BatchedTransport) Send(data []byte) error {
-	b.lifecycle.Lock()
-	defer b.lifecycle.Unlock()
 	if !b.running.Load() {
 		utils.Debugf("[BATCH] Send: not running, dropping %d bytes", len(data))
 		return fmt.Errorf("batched transport is not running")
@@ -136,8 +217,20 @@ func (b *BatchedTransport) Send(data []byte) error {
 			len(p), len(b.queue), cap(b.queue))
 		return nil
 	default:
-		utils.Debugf("[BATCH] Send: QUEUE FULL, dropped %d bytes", len(p))
-		return fmt.Errorf("batch queue full")
+		// Backpressure: try once more with a brief wait before dropping,
+		// giving the flush loop time to drain. This reduces packet loss
+		// during traffic bursts significantly.
+		select {
+		case b.queue <- p:
+			utils.Debugf("[BATCH] Send: enqueued %d bytes after brief wait (queue %d/%d)",
+				len(p), len(b.queue), cap(b.queue))
+			return nil
+		case <-time.After(2 * time.Millisecond):
+			utils.Debugf("[BATCH] Send: QUEUE FULL, dropped %d bytes", len(p))
+			return fmt.Errorf("batch queue full")
+		case <-b.stopCh:
+			return fmt.Errorf("batched transport is stopped")
+		}
 	}
 }
 
@@ -219,9 +312,18 @@ func (b *BatchedTransport) flushLoop() {
 
 		// Phase 2: brief linger to catch stragglers arriving just after the
 		// burst. Negligible next to the channel RTT, but it fills batches
-		// during steady bulk transfer.
+		// during steady bulk transfer. A small random jitter (-50%..+50%) is
+		// added so the inter-message spacing does not settle into a fixed
+		// cadence, which is a recognizable fingerprint of a tunneled flow.
 		if b.lingerMs > 0 && size < b.maxBatchBytes && len(batch) < b.maxBatchCount {
-			timer := time.NewTimer(time.Duration(b.lingerMs) * time.Millisecond)
+			linger := b.lingerMs
+			if jitter := envInt("OPENFLUX_BATCH_JITTER_MS", defaultJitterMs); jitter > 0 {
+				linger += rand.Intn(2*jitter+1) - jitter
+				if linger < 0 {
+					linger = 0
+				}
+			}
+			timer := time.NewTimer(time.Duration(linger) * time.Millisecond)
 		linger:
 			for size < b.maxBatchBytes && len(batch) < b.maxBatchCount {
 				select {
@@ -237,11 +339,11 @@ func (b *BatchedTransport) flushLoop() {
 				}
 			}
 			timer.Stop()
-			utils.Debugf("[BATCH] flushLoop: phase2 linger done, %d packets, %d bytes",
-				len(batch), size)
+			utils.Debugf("[BATCH] flushLoop: phase2 linger(%dms) done, %d packets, %d bytes",
+				linger, len(batch), size)
 		}
 
-		encoded := encodeBatch(batch)
+		encoded := encodeBatchWithPad(batch, b.pad)
 		utils.Debugf("[BATCH] flushLoop: sending batch of %d packets (%d raw -> %d wire bytes)",
 			len(batch), size, len(encoded))
 		if utils.IsVerbose() && utils.Sensitive() {

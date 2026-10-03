@@ -21,6 +21,7 @@ import (
 const (
 	batchFormatVersion = 0x02
 	batchFlagZstd      = 0x01
+	batchFlagPadded    = 0x02
 	maxFrameBytes      = 1 << 20
 	maxFrameRecords    = 1024
 )
@@ -72,19 +73,47 @@ func frameBatch(pkts [][]byte) []byte {
 // encodeBatch serializes packets into a single wire-v2 frame, compressing
 // the whole batch with zstd only when that actually shrinks it.
 func encodeBatch(pkts [][]byte) []byte {
+	return encodeBatchWithPad(pkts, PadConfig{})
+}
+
+func encodeBatchWithPad(pkts [][]byte, pad PadConfig) []byte {
 	framed := frameBatch(pkts)
 	compressed := zstdEnc.EncodeAll(framed, nil)
 
 	if len(compressed) < len(framed) {
-		out := make([]byte, 2, 2+len(compressed))
+		padding := batchPad(pad, 2+len(compressed)+2)
+		flags := byte(batchFlagZstd)
+		if padding > 0 {
+			flags |= batchFlagPadded
+		}
+		out := make([]byte, 2, 2+len(compressed)+2+padding)
 		out[0] = batchFormatVersion
-		out[1] = batchFlagZstd
-		return append(out, compressed...)
+		out[1] = flags
+		out = append(out, compressed...)
+		return appendPadding(out, padding)
 	}
-	out := make([]byte, 2, 2+len(framed))
+	padding := batchPad(pad, 2+len(framed)+2)
+	flags := byte(0)
+	if padding > 0 {
+		flags |= batchFlagPadded
+	}
+	out := make([]byte, 2, 2+len(framed)+2+padding)
 	out[0] = batchFormatVersion
-	out[1] = 0
-	return append(out, framed...)
+	out[1] = flags
+	out = append(out, framed...)
+	return appendPadding(out, padding)
+}
+
+func appendPadding(out []byte, n int) []byte {
+	if n <= 0 {
+		return out
+	}
+	// A two-byte trailer stores the padding length. Padding is deliberately
+	// outside compression so it does not alter compression characteristics.
+	for i := 0; i < n; i++ {
+		out = append(out, byte(i*31+17))
+	}
+	return append(out, byte(n>>8), byte(n))
 }
 
 // decodeBatch reverses encodeBatch, returning the original packets.
@@ -100,10 +129,20 @@ func decodeBatch(data []byte) ([][]byte, error) {
 		return nil, fmt.Errorf("unknown batch version 0x%02x", data[0])
 	}
 	flags := data[1]
-	if flags & ^byte(batchFlagZstd) != 0 {
+	if flags & ^byte(batchFlagZstd|batchFlagPadded) != 0 {
 		return nil, fmt.Errorf("unknown batch flags 0x%02x", flags)
 	}
 	payload := data[2:]
+	if flags&batchFlagPadded != 0 {
+		if len(payload) < 2 {
+			return nil, fmt.Errorf("padded batch has no padding length")
+		}
+		n := int(binary.BigEndian.Uint16(payload[len(payload)-2:]))
+		if n < 1 || n+2 > len(payload) {
+			return nil, fmt.Errorf("invalid batch padding length %d", n)
+		}
+		payload = payload[:len(payload)-n-2]
+	}
 
 	framed := payload
 	if flags&batchFlagZstd != 0 {

@@ -26,12 +26,19 @@ const (
 	MsgStatus         MsgType = 0x03
 	MsgCommand        MsgType = 0x04
 	MsgLog            MsgType = 0x05
+	MsgHello          MsgType = 0x06
 )
 
 // MaxFrameBytes caps a single frame.
 const MaxFrameBytes = 1 << 20
 
+// ProtocolVersion is the app/core IPC schema version. New fields remain
+// additive, while this value lets clients reject incompatible revisions
+// instead of silently losing control or CAPTCHA events.
+const ProtocolVersion = 1
+
 type CookiesRequestPayload struct {
+	RequestID string `json:"request_id,omitempty"`
 	Transport string `json:"transport"`
 	URL       string `json:"url"`
 	Reason    string `json:"reason"`
@@ -44,6 +51,7 @@ type CookiesRequestPayload struct {
 }
 
 type CookiesOfferPayload struct {
+	RequestID string            `json:"request_id,omitempty"`
 	Transport string            `json:"transport"`
 	Jar       map[string]string `json:"jar"`
 	Domain    string            `json:"domain,omitempty"`
@@ -53,17 +61,24 @@ type CookiesOfferPayload struct {
 }
 
 type StatusPayload struct {
-	Running   bool   `json:"running"`
-	Connected bool   `json:"connected"`
-	BytesIn   uint64 `json:"bytes_in"`
-	BytesOut  uint64 `json:"bytes_out"`
-	UptimeMs  int64  `json:"uptime_ms"`
+	ProtocolVersion int      `json:"protocol_version,omitempty"`
+	Capabilities    []string `json:"capabilities,omitempty"`
+	Running         bool     `json:"running"`
+	Connected       bool     `json:"connected"`
+	BytesIn         uint64   `json:"bytes_in"`
+	BytesOut        uint64   `json:"bytes_out"`
+	UptimeMs        int64    `json:"uptime_ms"`
 	// Active names the carrier data currently goes through ("" when none
 	// reaches the peer). Sessions only.
 	Active string `json:"active,omitempty"`
 	// ActiveAll names every carrier data is spread over: several when they
 	// share the highest priority. Active is the first. Sessions only.
 	ActiveAll []string `json:"active_all,omitempty"`
+}
+
+type HelloPayload struct {
+	ProtocolVersion int      `json:"protocol_version"`
+	Capabilities    []string `json:"capabilities,omitempty"`
 }
 
 type CommandPayload struct {
@@ -92,12 +107,28 @@ func WriteFrame(w io.Writer, typ MsgType, payload interface{}) error {
 	var hdr [5]byte
 	binary.BigEndian.PutUint32(hdr[:4], uint32(n))
 	hdr[4] = byte(typ)
-	if _, err := w.Write(hdr[:]); err != nil {
+	if err := writeFull(w, hdr[:]); err != nil {
 		return err
 	}
 	if len(body) > 0 {
-		if _, err := w.Write(body); err != nil {
+		if err := writeFull(w, body); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func writeFull(w io.Writer, data []byte) error {
+	for len(data) > 0 {
+		n, err := w.Write(data)
+		if n > 0 {
+			data = data[n:]
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
 		}
 	}
 	return nil

@@ -353,7 +353,11 @@ func (t *YandexDocsTransport) keepAliveLoop() {
 	keepAliveMsg := `42["message",{"type":"cursor","cursor":"18;---KA---"}]`
 
 	for t.IsRunning() {
-		<-ticker.C
+		select {
+		case <-t.Done():
+			return
+		case <-ticker.C:
+		}
 		t.Mu.Lock()
 		session := t.session
 		t.Mu.Unlock()

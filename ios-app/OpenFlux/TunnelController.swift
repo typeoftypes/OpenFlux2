@@ -18,6 +18,7 @@ enum TransportKind: String, CaseIterable, Identifiable {
 final class TunnelController: ObservableObject {
     @Published var running = false
     @Published var connected = false
+    @Published var captchaRequestID = ""
     @Published var log: String = ""
     @Published var stats: String = ""
 
@@ -87,6 +88,11 @@ final class TunnelController: ObservableObject {
     private func pollOnce() {
         running = OpenFluxIsRunning() != 0
         connected = OpenFluxIsConnected() != 0
+
+        if let c = OpenFluxCaptchaRequestID() {
+            captchaRequestID = String(cString: c)
+            OpenFluxFreeString(c)
+        }
 
         if let c = OpenFluxReadLog() {
             let s = String(cString: c)

@@ -1030,11 +1030,13 @@ func ipcStatusLoop(srv *ipc.Server, src statusSource, active func() string, acti
 	for range tick.C {
 		st := src.Stats()
 		p := &ipc.StatusPayload{
-			Running:   true,
-			Connected: src.IsConnected(),
-			BytesIn:   st.BytesReceived,
-			BytesOut:  st.BytesSent,
-			UptimeMs:  time.Since(started).Milliseconds(),
+			ProtocolVersion: ipc.ProtocolVersion,
+			Capabilities:    []string{"status-v1", "captcha-request-id", "cookie-replay"},
+			Running:         true,
+			Connected:       src.IsConnected(),
+			BytesIn:         st.BytesReceived,
+			BytesOut:        st.BytesSent,
+			UptimeMs:        time.Since(started).Milliseconds(),
 		}
 		if active != nil {
 			p.Active = active()
@@ -1156,11 +1158,13 @@ func streamStatusLoop(srv *ipc.Server, p *streamproxy.Proxy) {
 	defer tick.Stop()
 	for range tick.C {
 		_ = srv.SendStatus(&ipc.StatusPayload{
-			Running:   true,
-			Connected: p.Connected(),
-			BytesIn:   uint64(p.BytesReceived()),
-			BytesOut:  uint64(p.BytesSent()),
-			UptimeMs:  time.Since(started).Milliseconds(),
+			ProtocolVersion: ipc.ProtocolVersion,
+			Capabilities:    []string{"status-v1", "captcha-request-id", "cookie-replay"},
+			Running:         true,
+			Connected:       p.Connected(),
+			BytesIn:         uint64(p.BytesReceived()),
+			BytesOut:        uint64(p.BytesSent()),
+			UptimeMs:        time.Since(started).Milliseconds(),
 		})
 	}
 }

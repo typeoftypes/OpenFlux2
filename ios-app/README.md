@@ -42,6 +42,7 @@ State and checks:
   `OpenFluxMode()` (`session` / `classic`), `OpenFluxActiveTransport()`.
 - `OpenFluxCaptchaPending()` (this phone's carrier), `OpenFluxRemoteCaptchaPending()` and
   `OpenFluxRemoteCaptchaProxy()` (the exit's), `OpenFluxCaptchaReason()`,
+  `OpenFluxCaptchaRequestID()` (changes for each new pending check),
   `OpenFluxApplyCaptchaCookies(header)` / `OpenFluxOfferCaptchaCookies(header)`,
   `OpenFluxCancelCaptcha()`, `OpenFluxSetInitialCookies(header)`, `OpenFluxSetCookieStore(path)`.
 - `OpenFluxReadLog()`, `OpenFluxSetDebug(on)`, `OpenFluxSetDebugLevel(0..3)`,

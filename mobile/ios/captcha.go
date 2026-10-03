@@ -60,6 +60,14 @@ func OpenFluxCaptchaReason() *C.char {
 	return C.CString(mobile.PendingCaptchaReason())
 }
 
+// OpenFluxCaptchaRequestID identifies the current pending browser check, or
+// "" when no check is pending. Free with OpenFluxFreeString.
+//
+//export OpenFluxCaptchaRequestID
+func OpenFluxCaptchaRequestID() *C.char {
+	return C.CString(mobile.PendingCaptchaID())
+}
+
 // OpenFluxApplyCaptchaCookies takes the cookies of a passed check (a
 // Cookie header, "a=1; b=2") and hands them to the carrier that asked:
 // this phone's, or the exit's (then they are sent to it). Returns the
