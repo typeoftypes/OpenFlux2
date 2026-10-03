@@ -1,4 +1,4 @@
-name: Anrdroid
+name: Android
 
 # A tag like v1.2.3 builds and signs the release APKs from the OpenFlux/ and
 # shared/ submodules pinned in that commit, and publishes them as a GitHub
