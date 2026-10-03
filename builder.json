@@ -8,7 +8,10 @@
   "provider": "github",
   "codemagic": {},
   "bitrise": {},
-  "ios": {},
+  "ios": {
+    "path": "ios-app",
+    "scheme": "OpenFlux"
+  },
   "flutter": {
     "watch": {}
   },
