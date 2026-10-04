@@ -29,7 +29,8 @@ final class VPNController: ObservableObject {
     func start(transport: String, url: String, maxToken: String, maxUid: String,
                dns: String, tunnelUDP: Bool, split: String = "",
                directDomains: String = "", profileID: UUID? = nil,
-               keySlot: String = "", onDemand: Bool = true) {
+               keySlot: String = "", onDemand: Bool = true, nodeAddr: String = "",
+               session: String = "") {
         Task {
             let m = manager ?? NETunnelProviderManager()
             let proto = NETunnelProviderProtocol()
@@ -47,6 +48,12 @@ final class VPNController: ObservableObject {
                 // is persisted with the VPN profile, so it must not hold secrets.
                 "profileID": profileID?.uuidString ?? "",
                 "keySlot": keySlot,   // "direct" = взять ключ прямого канала
+                // Адрес direct-канала узла: сигнал «session c direct» для
+                // маршрутизации (Яндекс в туннель, IP узла мимо).
+                "nodeAddr": nodeAddr,
+                // Готовый specs negotiate-профиля ({context,transports}). Не
+                // пусто = звать OpenFluxStartSessionPacketTunnel с этим и ключом.
+                "session": session,
             ]
             m.protocolConfiguration = proto
             m.localizedDescription = "OpenFlux"
@@ -96,6 +103,8 @@ final class VPNController: ObservableObject {
     @Published var captchaURL: String?
     /// Проверка в интересах узла: проходить НЕ отключая туннель.
     @Published var remoteCaptchaURL: String?
+    /// Loopback HTTP proxy (host:port) for the «за узел» captcha WebView.
+    @Published var remoteCaptchaProxy: String?
 
     private var logTimer: Timer?
 
@@ -146,6 +155,13 @@ final class VPNController: ObservableObject {
         try? session.sendProviderMessage(msg) { [weak self] data in
             let url = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
             Task { @MainActor in self?.remoteCaptchaURL = url.isEmpty ? nil : url }
+        }
+        // Loopback proxy for the «за узел» WebView (routes the page via the exit).
+        if let pmsg = "captchaproxy".data(using: .utf8) {
+            try? session.sendProviderMessage(pmsg) { [weak self] data in
+                let p = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                Task { @MainActor in self?.remoteCaptchaProxy = p.isEmpty ? nil : p }
+            }
         }
     }
 

@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import Network
 
 /// Interactive-captcha solver.
 ///
@@ -18,6 +19,15 @@ struct CaptchaView: View {
     let url: URL
     /// Called with cookies in Cookie-header form ("a=1; b=2").
     let onCookies: (String) -> Void
+    /// Loopback HTTP proxy (host:port) from OpenFluxRemoteCaptchaProxy: for a
+    /// check «за узел» the page MUST leave through the exit's address, so the
+    /// WebView routes through this proxy (iOS 17+). Empty/nil = load directly
+    /// (local captcha, solved from the phone's own address).
+    var proxy: String? = nil
+    /// SOCKS5 proxy (host:port) of the in-app session (TunnelController). When
+    /// set, the page routes through it — this is how the captcha is solved
+    /// outside the NE (no 50 MB jetsam cap), still leaving from the node's IP.
+    var socksProxy: String? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var status = "Пройдите проверку — куки подхватятся автоматически"
@@ -28,7 +38,7 @@ struct CaptchaView: View {
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
-                CaptchaWebView(url: url, model: model)
+                CaptchaWebView(url: url, model: model, proxy: proxy, socksProxy: socksProxy)
 
                 VStack(spacing: 8) {
                     if let e = model.loadError {
@@ -145,12 +155,38 @@ final class CaptchaWebModel: ObservableObject {
 private struct CaptchaWebView: UIViewRepresentable {
     let url: URL
     let model: CaptchaWebModel
+    var proxy: String? = nil
+    var socksProxy: String? = nil
+
+    private func endpoint(_ s: String) -> NWEndpoint? {
+        let hp = s.split(separator: ":")
+        guard hp.count == 2, let port = NWEndpoint.Port(rawValue: UInt16(hp[1]) ?? 0) else { return nil }
+        return .hostPort(host: .init(String(hp[0])), port: port)
+    }
 
     func makeUIView(context: Context) -> WKWebView {
         let cfg = WKWebViewConfiguration()
         // Default (persistent) store on purpose: a non-persistent one would keep
         // the solved cookies out of reach after the sheet closes.
         cfg.websiteDataStore = .default()
+        // Remote check «за узел»: route the page through a proxy so it is issued
+        // for the NODE's IP (spravka is IP-bound). SOCKS = the in-app session
+        // (TunnelController, no NE memory cap); HTTP = the NE's loopback proxy. A
+        // non-persistent store keeps the app-wide default store proxy-free;
+        // cookies are still readable from it before dismiss. Requires iOS 17.
+        if #available(iOS 17.0, *) {
+            var cfgProxy: ProxyConfiguration?
+            if let s = socksProxy, !s.isEmpty, let ep = endpoint(s) {
+                cfgProxy = ProxyConfiguration(socksv5Proxy: ep)
+            } else if let p = proxy, !p.isEmpty, let ep = endpoint(p) {
+                cfgProxy = ProxyConfiguration(httpCONNECTProxy: ep)
+            }
+            if let cp = cfgProxy {
+                let store = WKWebsiteDataStore.nonPersistent()
+                store.proxyConfigurations = [cp]
+                cfg.websiteDataStore = store
+            }
+        }
         let web = WKWebView(frame: .zero, configuration: cfg)
         web.navigationDelegate = context.coordinator
         model.webView = web

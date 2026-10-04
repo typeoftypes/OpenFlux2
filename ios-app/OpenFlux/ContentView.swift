@@ -63,7 +63,15 @@ struct ContentView: View {
         let url: URL
         /// true — проверка за узел: туннель не гасим, куки отдаём ему.
         var forPeer = false
+        /// Loopback-прокси узла для WebView (проверка за узел идёт с IP узла).
+        var proxy: String? = nil
+        /// SOCKS in-app сессии: решаем капчу мимо NE (без лимита 50 МБ).
+        var socksProxy: String? = nil
+        /// true — оживление yandex через in-app сессию (куки шлёт tunnel, не NE).
+        var revive = false
     }
+    private enum ReviveStage { case idle, connecting, solving }
+    @State private var reviveStage: ReviveStage = .idle
     @State private var captchaTask: CaptchaTask?
     /// VPN был включён и его выключили ради капчи — значит после передачи кук
     /// его надо поднять обратно.
@@ -160,7 +168,32 @@ struct ContentView: View {
                       dns: dnsSpec, tunnelUDP: tunnelUDP,
                       split: splitRU ? "ru-direct" : "",
                       directDomains: directDomains.joined,
-                      profileID: p.id, onDemand: autoReconnect)
+                      profileID: p.id, onDemand: autoReconnect,
+                      nodeAddr: p.nodeAddr ?? "",
+                      session: p.sessionSpecs ?? "")
+        }
+    }
+
+    /// Оживляет yandex на узле, решая капчу «за узел» в IN-APP сессии (SOCKS в
+    /// процессе приложения), мимо NE и его лимита 50 МБ. Гасит VPN (узел держит
+    /// одного клиента), поднимает in-app сессию; когда узел попросит yandex-капчу
+    /// (tunnel.remoteCaptchaURL), onChange откроет её через SOCKS этой сессии.
+    private func reviveYandexViaApp() {
+        guard let p = store.selected, p.negotiate == true, let specs = p.sessionSpecs else {
+            testHint = "Нужен session-профиль для оживления."
+            return
+        }
+        let key = Secrets.encryptionKey(for: p.id) ?? ""
+        guard key.count >= 16 else { testHint = "У профиля нет ключа шифрования."; return }
+        reviveStage = .connecting
+        testHint = "Поднимаю in-app сессию для капчи (NE выключен)…"
+        vpn.stop()
+        tunnel.stop()
+        // Пауза, чтобы NE отпустил сессию на узле (один клиент на узел), иначе
+        // in-app сессия и NE воюют за «того же клиента».
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            tunnel.startSession(specs: specs, secret: key,
+                                port: (Int(socksPort) ?? 10808) + 7)
         }
     }
 
@@ -196,6 +229,27 @@ struct ContentView: View {
                     connectButton
 
                     Text(statusText).font(.headline)
+
+                    if let p = store.selected, p.negotiate == true, p.sessionSpecs != nil {
+                        Button {
+                            reviveYandexViaApp()
+                        } label: {
+                            Label(reviveStage == .idle
+                                  ? "Оживить Яндекс (капча в приложении)"
+                                  : "Поднимаю сессию для капчи…",
+                                  systemImage: "arrow.triangle.2.circlepath")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(reviveStage != .idle)
+
+                        Text(reviveStage == .idle
+                             ? "VPN выключится, откроется капча Яндекса — пройдите её. Потом НЕ закрывайте ~15 сек (куки улетают узлу), затем включите VPN. Нужен iOS 17+."
+                             : "Идёт оживление: решите капчу и НЕ закрывайте ~15 секунд — куки отправляются узлу.")
+                            .font(.caption2).foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity)
+                    }
 
                     profilePicker
 
@@ -249,7 +303,7 @@ struct ContentView: View {
             .onChange(of: vpn.status) { st in
                 if dcStage == .connecting, st.contains("Connected"), let doc = dcDoc {
                     dcStage = .solving
-                    captchaTask = CaptchaTask(url: doc, forPeer: true)
+                    captchaTask = CaptchaTask(url: doc, forPeer: true, proxy: vpn.remoteCaptchaProxy)
                 }
             }
             .onAppear {
@@ -261,13 +315,33 @@ struct ContentView: View {
                 vpn.logSink = { [weak tunnel] line in tunnel?.appendExternal(line) }
             }
             .sheet(item: $captchaTask) { task in
-                CaptchaView(url: task.url) { header in
-                    if task.forPeer {
+                CaptchaView(url: task.url, onCookies: { header in
+                    if task.revive {
+                        tunnel.offerCaptchaCookies(header)   // in-app session -> exit (async control frame)
+                        // НЕ гасим сразу: offer летит по сессии асинхронно, узлу
+                        // надо успеть принять куки и переподключить yandex. Держим
+                        // сессию ещё 15с, потом стоп.
+                        testHint = "Куки отправлены узлу — держу сессию 15с, чтобы Яндекс ожил…"
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+                            tunnel.stop()
+                            reviveStage = .idle
+                            testHint = "Готово. Яндекс на узле должен ожить — подключайтесь обычным профилем."
+                        }
+                    } else if task.forPeer {
                         handlePeerCaptchaCookies(header)
                     } else {
                         handleCaptchaCookies(header)
                     }
-                }
+                }, proxy: task.proxy, socksProxy: task.socksProxy)
+            }
+            .onChange(of: tunnel.remoteCaptchaURL) { newVal in
+                // In-app revival: the session is up and the exit asked for the
+                // yandex check — open it through the in-app SOCKS (node's IP,
+                // no NE memory cap).
+                guard reviveStage == .connecting, let s = newVal, let u = URL(string: s) else { return }
+                reviveStage = .solving
+                captchaTask = CaptchaTask(url: u, forPeer: true,
+                                          socksProxy: tunnel.socksAddr, revive: true)
             }
             .sheet(isPresented: $showInfo) { InfoView() }
             .sheet(isPresented: $showSettings) {
@@ -376,7 +450,7 @@ struct ContentView: View {
     private var manualPeerCaptcha: some View {
         if vpn.active, remoteCaptchaTarget == nil, let u = yandexDocForPeer {
             Button {
-                captchaTask = CaptchaTask(url: u, forPeer: true)
+                captchaTask = CaptchaTask(url: u, forPeer: true, proxy: vpn.remoteCaptchaProxy)
             } label: {
                 Label("Пройти капчу Яндекса за узел", systemImage: "shield.lefthalf.filled")
                     .frame(maxWidth: .infinity)
@@ -396,7 +470,7 @@ struct ContentView: View {
                 Text("Пройдите её, НЕ отключая туннель: выход пойдёт с адреса узла, и куки подойдут именно ему. Приложение передаст их узлу само.")
                     .font(.caption2).foregroundColor(.secondary)
                 Button {
-                    captchaTask = CaptchaTask(url: u, forPeer: true)
+                    captchaTask = CaptchaTask(url: u, forPeer: true, proxy: vpn.remoteCaptchaProxy)
                 } label: {
                     Label("Пройти за узел", systemImage: "hand.tap")
                         .frame(maxWidth: .infinity)
@@ -707,6 +781,26 @@ struct ProfileEditorView: View {
 
     private var transport: TransportKind { TransportKind(rawValue: transportRaw) ?? .yandex }
 
+    /// Один носитель session-профиля для отображения в редакторе.
+    struct SessionCarrier: Hashable {
+        let type: String, priority: Int, target: String
+        var title: String {
+            TransportKind(rawValue: type == "vyandex" ? "volga" : type)?.title ?? type
+        }
+    }
+    /// Разбирает sessionSpecs ({transports:[{type,priority,url|dial}]}) в список
+    /// носителей, отсортированный по приоритету.
+    static func parseSessionCarriers(_ specs: String) -> [SessionCarrier]? {
+        guard let d = specs.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let ts = obj["transports"] as? [[String: Any]] else { return nil }
+        return ts.map { t in
+            SessionCarrier(type: (t["type"] as? String) ?? "?",
+                           priority: (t["priority"] as? Int) ?? 0,
+                           target: (t["url"] as? String) ?? (t["dial"] as? String) ?? "")
+        }.sorted { $0.priority > $1.priority }
+    }
+
     var body: some View {
         NavigationView {
             Form {
@@ -717,6 +811,32 @@ struct ProfileEditorView: View {
                     }
                     if transport == .direct {
                         Text("Прямой TCP до узла: в поле ниже — его host:port, ключ шифрования обязателен. Канал не скрытый: адрес узла виден.")
+                            .font(.caption2).foregroundColor(.secondary)
+                    }
+                }
+
+                if let specs = profile?.sessionSpecs,
+                   let carriers = Self.parseSessionCarriers(specs), !carriers.isEmpty {
+                    Section("Мультитранспорт (session)") {
+                        ForEach(carriers, id: \.self) { c in
+                            HStack(alignment: .firstTextBaseline) {
+                                Image(systemName: "arrow.triangle.branch")
+                                    .font(.caption).foregroundColor(.secondary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(c.title).font(.callout)
+                                    if !c.target.isEmpty {
+                                        Text(c.target)
+                                            .font(.system(.caption2, design: .monospaced))
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(1).truncationMode(.middle)
+                                    }
+                                }
+                                Spacer()
+                                Text("prio \(c.priority)")
+                                    .font(.caption2).foregroundColor(.secondary)
+                            }
+                        }
+                        Text("Согласованная сессия: все носители поднимаются вместе, трафик идёт по высшему ЖИВОМУ приоритету (failover). Состав задаётся ссылкой узла.")
                             .font(.caption2).foregroundColor(.secondary)
                     }
                 }
@@ -861,10 +981,18 @@ struct ProfileEditorView: View {
     private func ingest(_ raw: String) -> Bool {
         let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if ShareLink.looksLikeLink(s) {
-            let (cfg, err) = ShareLink.decode(s)
+            let (cfg, session, err) = ShareLink.decode(s)
             if let cfg = cfg {
-                // Несколько носителей — это несколько профилей; в одну форму
-                // они не помещаются, поэтому заводим их сразу и закрываемся.
+                // Session-ссылка (--negotiate): заводим ОДИН session-профиль
+                // через apply — ключ идёт в ОСНОВНОЙ слот, а specs/контекст
+                // сохраняются (иначе yandex стартует без ключа и с чужим KDF).
+                if cfg.negotiate == true, let many = onImportMany {
+                    many(ShareImporter.buildSession(from: cfg, specs: session ?? ""))
+                    dismiss()
+                    return true
+                }
+                // Несколько носителей — несколько профилей; в одну форму они не
+                // помещаются, заводим сразу и закрываемся.
                 let imported = ShareImporter.build(from: cfg)
                 if imported.profiles.count > 1, let many = onImportMany {
                     many(imported)
