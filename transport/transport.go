@@ -12,6 +12,12 @@ type TransportConfig struct {
 	ReconnectMultiplier  float64
 	MaxQueueSize         int
 	KeepAliveInterval    time.Duration
+	
+	// Advanced stability and masking
+	StealthConfig     StealthConfig
+	ResilienceConfig  ResilienceConfig
+	EnableMasking     bool
+	BrowserProfile    *BrowserProfile
 }
 
 type Transport interface {
@@ -34,12 +40,17 @@ type TransportStats struct {
 }
 
 func DefaultConfig() TransportConfig {
+	profile := GetRandomBrowserProfile()
 	return TransportConfig{
 		MaxReconnectAttempts: 999999,
 		ReconnectDelay:       0,
 		ReconnectMultiplier:  1.1,
 		MaxQueueSize:         1024,
 		KeepAliveInterval:    10 * time.Second,
+		StealthConfig:        DefaultStealthConfig(),
+		ResilienceConfig:     DefaultResilienceConfig(),
+		EnableMasking:        true,
+		BrowserProfile:       &profile,
 	}
 }
 
@@ -59,14 +70,26 @@ type BaseTransport struct {
 	// interrupt sleeps and backoff loops.
 	done     chan struct{}
 	doneOnce sync.Once
+	
+	// Advanced stability components
+	circuitBreaker  *CircuitBreaker
+	healthMonitor   *HealthMonitor
+	adaptiveTimeout *AdaptiveTimeout
+	
+	// Packet counter for traffic shaping
+	packetsSent atomic.Int32
 }
 
 func NewBaseTransport(config TransportConfig) *BaseTransport {
-	return &BaseTransport{
-		config:    config,
-		startTime: time.Now(),
-		done:      make(chan struct{}),
+	bt := &BaseTransport{
+		config:          config,
+		startTime:       time.Now(),
+		done:            make(chan struct{}),
+		circuitBreaker:  NewCircuitBreaker(config.ResilienceConfig),
+		healthMonitor:   NewHealthMonitor(config.ResilienceConfig),
+		adaptiveTimeout: NewAdaptiveTimeout(config.ResilienceConfig),
 	}
+	return bt
 }
 
 func (b *BaseTransport) Start() error {
@@ -82,6 +105,9 @@ func (b *BaseTransport) Stop() error {
 	b.connected.Store(0)
 	if b.done != nil {
 		b.doneOnce.Do(func() { close(b.done) })
+	}
+	if b.healthMonitor != nil {
+		b.healthMonitor.Stop()
 	}
 	return nil
 }
@@ -151,6 +177,7 @@ func (b *BaseTransport) Stats() TransportStats {
 func (b *BaseTransport) RecordSend(bytes int) {
 	atomic.AddUint64(&b.stats.BytesSent, uint64(bytes))
 	atomic.AddUint64(&b.stats.PacketsSent, 1)
+	b.packetsSent.Add(1)
 }
 
 func (b *BaseTransport) RecordReceive(bytes int) {
