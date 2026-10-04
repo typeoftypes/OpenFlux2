@@ -82,10 +82,10 @@ jobs:
         env:
           SNAPSHOT_REF: ${{ inputs.snapshot_ref }}
         run: |
-          set -e
-          git fetch --depth=1 origin "+$SNAPSHOT_REF:refs/heads/snapshot"
-          git checkout --force snapshot
-          echo "Building $(git rev-parse --short HEAD)"
+  set -e
+  echo "SNAPSHOT_REF=$SNAPSHOT_REF"
+  git ls-remote origin "$SNAPSHOT_REF"
+  git fetch --depth=1 origin "+$SNAPSHOT_REF:refs/heads/snapshot"
 
       # Dispatch inputs arrive with their declared defaults; a tag push has none,
       # so the values come from builder.json in the tagged commit (defaultProfile
