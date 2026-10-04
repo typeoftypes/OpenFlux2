@@ -128,14 +128,13 @@ enum ShareImporter {
         return out
     }
 
-    /// Записывает профили и их секреты. Секреты идут в Keychain, а не в профиль:
-    /// сам профиль лежит в UserDefaults открытым текстом.
+    /// Записывает профили и их секреты в файловое хранилище (не Keychain).
     @MainActor
     static func apply(_ imported: Imported, to store: ProfileStore) {
         for p in imported.profiles {
             if let s = imported.secrets[p.id] {
-                Secrets.setEncryptionKey(s.main, for: p.id)
-                Secrets.setDirectKey(s.direct, for: p.id)
+                FileStorage.setEncryptionKey(s.main, for: p.id)
+                FileStorage.setDirectKey(s.direct, for: p.id)
             }
             store.upsert(p)
         }
@@ -187,8 +186,8 @@ enum ShareLink {
         var transports: [[String: Any]] = []
         var cfg: [String: Any] = ["name": p.name]
 
-        let secret = Secrets.encryptionKey(for: p.id) ?? ""
-        let directSecret = Secrets.directKey(for: p.id) ?? ""
+        let secret = FileStorage.encryptionKey(for: p.id) ?? ""
+        let directSecret = FileStorage.directKey(for: p.id) ?? ""
         let dial = (p.nodeAddr ?? "").trimmingCharacters(in: .whitespaces)
 
         switch p.transportKind {

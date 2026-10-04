@@ -61,7 +61,7 @@ final class TunnelController: ObservableObject {
         // же запрос к документу упрётся в ту же капчу, хотя куки уже есть.
         // Раньше это делало только расширение, и локальный прокси стартовал без
         // кук вслепую.
-        let savedCookies = Secrets.captchaCookies() ?? ""
+        let savedCookies = FileStorage.captchaCookies() ?? ""
         savedCookies.withCString {
             OpenFluxSetInitialCookies(UnsafeMutablePointer(mutating: $0))
         }
@@ -113,7 +113,7 @@ final class TunnelController: ObservableObject {
         guard !running else { return }
         let addr = "127.0.0.1:\(port)"
         socksAddr = addr
-        (Secrets.captchaCookies() ?? "").withCString {
+        (FileStorage.captchaCookies() ?? "").withCString {
             OpenFluxSetInitialCookies(UnsafeMutablePointer(mutating: $0))
         }
         let rc = specs.withCString { sp in

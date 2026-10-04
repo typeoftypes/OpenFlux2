@@ -233,6 +233,24 @@ func newRawTransport(typ, url string, params map[string]interface{}, config tran
 	if lowMemory.Load() {
 		config.MaxQueueSize = 512
 	}
+	// Ensure stealth and resilience config populated for all transports.
+	if config.StealthConfig == (transport.StealthConfig{}) {
+		config.StealthConfig = transport.DefaultStealthConfig()
+	}
+	if config.ResilienceConfig == (transport.ResilienceConfig{}) {
+		config.ResilienceConfig = transport.DefaultResilienceConfig()
+	}
+	config.EnableMasking = true
+	if config.BrowserProfile == nil {
+		profile := transport.GetRandomBrowserProfile()
+		config.BrowserProfile = &profile
+	}
+	// Lower-memory devices get lighter stealth (smaller padding, fewer bursts).
+	if lowMemory.Load() {
+		config.StealthConfig.MaxPaddingBytes = 64
+		config.StealthConfig.BurstSize = 3
+	}
+
 	switch typ {
 	case "", "yandex":
 		return yandex.NewYandexDocsTransport(url, config), nil
@@ -252,6 +270,12 @@ func newRawTransport(typ, url string, params map[string]interface{}, config tran
 		return oneme.NewOneMeTransport(exit, str("token"), uid, config), nil
 	case "direct":
 		dcfg := transport.DefaultDirectConfig()
+		// Apply stability defaults for direct.
+		dcfg.KeepAliveInterval = 30 * time.Second
+		dcfg.ReconnectMinDelay = 300 * time.Millisecond
+		dcfg.ReconnectMaxDelay = 20 * time.Second
+		dcfg.ReconnectMultiplier = 1.5
+		dcfg.HandshakeTimeout = 20 * time.Second
 		if exit {
 			dcfg.IsExit = true
 			if dcfg.ListenAddr = str("listen"); dcfg.ListenAddr == "" {

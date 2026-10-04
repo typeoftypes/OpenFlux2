@@ -144,17 +144,17 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         // End-to-end encryption: the secret never rides in providerConfiguration
         // (which is persisted with the VPN profile), only the profile id does —
-        // the secret itself comes from the Keychain group shared with the app.
-        // Must be set before the core builds its transport stack.
+        // the secret itself is read from the shared app-group container file,
+        // written by the main app and readable here via FileStorage.
         // Слот ключа: у докового профиля их два — свой ключ доков и ключ прямого
         // канала до узла. Спутать их значит отдать доковому транспорту чужой
         // ключ и молча ронять все пакеты.
         var encryptionKey = ""
         if let idString = conf["profileID"] as? String, let id = UUID(uuidString: idString) {
             if (conf["keySlot"] as? String) == "direct" {
-                encryptionKey = Secrets.directKey(for: id) ?? ""
+                encryptionKey = FileStorage.directKey(for: id) ?? ""
             } else {
-                encryptionKey = Secrets.encryptionKey(for: id) ?? ""
+                encryptionKey = FileStorage.encryptionKey(for: id) ?? ""
             }
         }
         encryptionKey.withCString { k in
@@ -163,7 +163,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         // Куки капчи, пройденной с выключенным туннелем. Отдаём ДО старта, чтобы
         // первый же запрос к документу пошёл с ними и не упёрся в ту же капчу.
-        let savedCookies = Secrets.captchaCookies() ?? ""
+        let savedCookies = FileStorage.captchaCookies() ?? ""
         savedCookies.withCString { c in
             OpenFluxSetInitialCookies(UnsafeMutablePointer(mutating: c))
         }

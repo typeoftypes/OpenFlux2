@@ -99,7 +99,7 @@ struct ContentView: View {
         guard let p = store.selected,
               p.transportKind == .yandex || p.transportKind == .volga,
               let addr = p.nodeAddr?.trimmingCharacters(in: .whitespaces), !addr.isEmpty,
-              Secrets.directKey(for: p.id) != nil
+              FileStorage.directKey(for: p.id) != nil
         else { return nil }
         return (addr, p.id)
     }
@@ -183,7 +183,7 @@ struct ContentView: View {
             testHint = "Нужен session-профиль для оживления."
             return
         }
-        let key = Secrets.encryptionKey(for: p.id) ?? ""
+        let key = FileStorage.encryptionKey(for: p.id) ?? ""
         guard key.count >= 16 else { testHint = "У профиля нет ключа шифрования."; return }
         reviveStage = .connecting
         testHint = "Поднимаю in-app сессию для капчи (NE выключен)…"
@@ -208,7 +208,7 @@ struct ContentView: View {
             tunnel.start(transport: p.transportKind, url: p.url,
                          maxToken: p.maxToken, maxUid: p.maxUid,
                          port: Int(socksPort) ?? 10808,
-                         encryptionKey: Secrets.encryptionKey(for: p.id) ?? "")
+                         encryptionKey: FileStorage.encryptionKey(for: p.id) ?? "")
             testHint = "Локальный прокси запущен — нажмите ещё раз для проверки."
         }
     }
@@ -541,7 +541,7 @@ struct ContentView: View {
     private func handleCaptchaCookies(_ header: String) {
         // Сохраняем всегда: если ядра сейчас нет (туннель погашен ради капчи),
         // это единственный способ донести куки до следующего старта.
-        Secrets.setCaptchaCookies(header)
+        FileStorage.setCaptchaCookies(header)
 
         if vpn.active {
             vpn.applyCaptchaCookies(header)
@@ -878,7 +878,7 @@ struct ProfileEditorView: View {
                         Text("Слишком короткий: нужно минимум 16 символов.")
                             .font(.caption2).foregroundColor(.red)
                     } else {
-                        Label("Ключ сохранится в Keychain, не в настройках VPN.",
+                        Label("Ключ сохранится в защищённом файле, не в настройках VPN.",
                               systemImage: "lock.fill")
                             .font(.caption2).foregroundColor(.secondary)
                     }
@@ -952,9 +952,9 @@ struct ProfileEditorView: View {
         guard let p = profile else { return }
         id = p.id; name = p.name; transportRaw = p.transport
         maxToken = p.maxToken; maxUid = p.maxUid
-        encryptionKey = Secrets.encryptionKey(for: p.id) ?? ""
+        encryptionKey = FileStorage.encryptionKey(for: p.id) ?? ""
         nodeAddr = p.nodeAddr ?? ""
-        directKey = Secrets.directKey(for: p.id) ?? ""
+        directKey = FileStorage.directKey(for: p.id) ?? ""
         let parts = p.url.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
         switch p.transportKind {
         case .yandex:
@@ -1082,10 +1082,10 @@ struct ProfileEditorView: View {
         case .max:
             url = ""
         }
-        // The secret goes to the shared Keychain, never into the profile record
-        // (which lives in plain UserDefaults). An emptied field removes it.
-        Secrets.setEncryptionKey(encryptionKey, for: id)
-        Secrets.setDirectKey(directKey, for: id)
+        // Ключ идёт в файловое хранилище, не в настройки VPN (которые хранятся
+        // системой в открытом виде). Пустое поле удаляет сохранённое значение.
+        FileStorage.setEncryptionKey(encryptionKey, for: id)
+        FileStorage.setDirectKey(directKey, for: id)
         onSave(Profile(id: id, name: name.trimmingCharacters(in: .whitespaces),
                        transport: transportRaw, url: url,
                        maxToken: maxToken, maxUid: maxUid,
@@ -1241,7 +1241,7 @@ struct SettingsSheet: View {
                         Button {
                             tunnel.start(transport: p.transportKind, url: p.url,
                                          maxToken: p.maxToken, maxUid: p.maxUid, port: port,
-                                         encryptionKey: Secrets.encryptionKey(for: p.id) ?? "")
+                                         encryptionKey: FileStorage.encryptionKey(for: p.id) ?? "")
                         } label: {
                             Label("Запустить локальный прокси", systemImage: "play.fill")
                         }

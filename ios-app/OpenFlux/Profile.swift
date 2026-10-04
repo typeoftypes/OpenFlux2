@@ -49,7 +49,10 @@ final class ProfileStore: ObservableObject {
     private let key = "profiles.v1"
     private let selKey = "profiles.selected.v1"
 
-    init() { load() }
+    init() {
+        load()
+        runMigration()
+    }
 
     var selected: Profile? {
         if let id = selectedID, let p = profiles.first(where: { $0.id == id }) { return p }
@@ -57,6 +60,7 @@ final class ProfileStore: ObservableObject {
     }
 
     func load() {
+        // Primary: UserDefaults (fast, in-process)
         if let data = UserDefaults.standard.data(forKey: key),
            let list = try? JSONDecoder().decode([Profile].self, from: data) {
             profiles = list
@@ -70,6 +74,8 @@ final class ProfileStore: ObservableObject {
     func save() {
         if let data = try? JSONEncoder().encode(profiles) {
             UserDefaults.standard.set(data, forKey: key)
+            // Mirror to shared container so tunnel extension can see profile list
+            FileStorage.saveProfilesBackup(data)
         }
         UserDefaults.standard.set(selectedID?.uuidString, forKey: selKey)
     }
@@ -86,11 +92,23 @@ final class ProfileStore: ObservableObject {
 
     func delete(_ p: Profile) {
         profiles.removeAll { $0.id == p.id }
+        FileStorage.removeEncryptionKey(for: p.id)
+        FileStorage.removeDirectKey(for: p.id)
         if selectedID == p.id { selectedID = profiles.first?.id }
         save()
     }
 
     func select(_ id: UUID) { selectedID = id; save() }
+
+    // MARK: - One-time Keychain → file migration
+
+    private static let migrationKey = "filestore.migration.v1.done"
+
+    private func runMigration() {
+        guard !UserDefaults.standard.bool(forKey: Self.migrationKey) else { return }
+        FileStorage.migrateFromKeychain(profileIDs: profiles.map(\.id))
+        UserDefaults.standard.set(true, forKey: Self.migrationKey)
+    }
 }
 
 /// Parse an "OFLUX1:" config string (base64url of {t,u}) into a transport kind
