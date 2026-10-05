@@ -203,18 +203,33 @@ jobs:
             deriveddata-
       - name: Detect project type
         id: detect
+        env:
+          IOS_PATH: ${{ steps.params.outputs.ios_path }}
         run: |
+          set -e
+          # Prefer an explicit native iOS tree (XcodeGen project.yml or a committed
+          # .xcodeproj under ios.path). The repo root also hosts the Android KMP
+          # Gradle modules; those must NOT flip the whole monorepo to "kmp" or
+          # xcodebuild runs without -project and fails with exit 66.
+          ios="${IOS_PATH:-.}"
           if [ -f "pubspec.yaml" ]; then
-            echo "type=flutter" >> $GITHUB_OUTPUT
+            echo "type=flutter" >> "$GITHUB_OUTPUT"
           elif [ -f "package.json" ] && grep -q '"expo"' package.json; then
-            echo "type=expo" >> $GITHUB_OUTPUT
+            echo "type=expo" >> "$GITHUB_OUTPUT"
           elif [ -f "package.json" ] && grep -q '"react-native"' package.json; then
-            echo "type=reactnative" >> $GITHUB_OUTPUT
-          elif grep -rqlE 'kotlin\("multiplatform"\)|org\.jetbrains\.kotlin\.multiplatform|id\("org.jetbrains.kotlin.multiplatform"\)' --include='*.gradle.kts' --include='*.gradle' --include='libs.versions.toml' . 2>/dev/null; then
-            echo "type=kmp" >> $GITHUB_OUTPUT
+            echo "type=reactnative" >> "$GITHUB_OUTPUT"
+          elif [ -f "$ios/project.yml" ] || [ -f "$ios/project.yaml" ] \
+            || [ -n "$(find "$ios" -maxdepth 1 -name '*.xcodeproj' -print -quit 2>/dev/null)" ]; then
+            echo "type=native" >> "$GITHUB_OUTPUT"
+          elif grep -rqlE 'kotlin\("multiplatform"\)|org\.jetbrains\.kotlin\.multiplatform|id\("org.jetbrains.kotlin.multiplatform"\)' \
+              --include='*.gradle.kts' --include='*.gradle' --include='libs.versions.toml' \
+              --exclude-dir=androidApp --exclude-dir=shared --exclude-dir=gradle \
+              "$ios" . 2>/dev/null; then
+            echo "type=kmp" >> "$GITHUB_OUTPUT"
           else
-            echo "type=native" >> $GITHUB_OUTPUT
+            echo "type=native" >> "$GITHUB_OUTPUT"
           fi
+          echo "Detected type=$(grep '^type=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2) (ios.path=$ios)"
       # A gitignored *.xcconfig next to a committed template is a common iOS
       # convention. The snapshot then carries the template but not the config,
       # and xcodebuild fails with "Unable to open base configuration reference
@@ -295,7 +310,13 @@ jobs:
           else
             echo "Found $MANIFEST and no .xcodeproj — generating with XcodeGen."
             brew install xcodegen
-            xcodegen generate
+            xcodegen generate --spec "$MANIFEST"
+            if [ -z "$(find . -maxdepth 1 -name '*.xcodeproj' -print -quit)" ]; then
+              echo "::error::xcodegen generate did not produce an .xcodeproj in $PWD"
+              ls -la
+              exit 1
+            fi
+            echo "Generated: $(find . -maxdepth 1 -name '*.xcodeproj' -print)"
           fi
       # Whatever the previous step could not fill in is named here, instead of
       # surfacing as xcodebuild's "Unable to open base configuration reference".
@@ -1104,6 +1125,10 @@ jobs:
               fi
             else
               echo "Building React Native iOS ($CONFIGURATION)..."
+            fi
+            if [ -z "$WORKSPACE" ] && [ -z "$PROJECT" ]; then
+              echo "::error::No .xcworkspace or .xcodeproj in '$IOS_PATH' (type=$PROJECT_TYPE). For a monorepo with Android KMP modules, set ios.path to the native app (e.g. ios-app) and keep project.yml there so detection picks native."
+              exit 1
             fi
             BUILD_CMD="xcodebuild"
             if [ -n "$WORKSPACE" ]; then
