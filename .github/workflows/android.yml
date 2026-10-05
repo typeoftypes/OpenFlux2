@@ -1,0 +1,201 @@
+name: Android
+
+on:
+  push:
+    tags: ['android-build/*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (X.Y.Z), e.g. 1.0.0'
+        required: true
+        type: string
+      publish:
+        description: 'Publish a GitHub release'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Resolve version
+        id: version
+        run: |
+          v="${{ inputs.version }}"
+          if [ -z "$v" ] && [[ "$GITHUB_REF" == refs/tags/android-build/* ]]; then
+            v="${GITHUB_REF#refs/tags/android-build/}"
+          fi
+          if [ -z "$v" ]; then v="0.0.0-dev"; fi
+          if ! [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version '$v' is not X.Y.Z"; exit 1
+          fi
+          echo "value=$v" >> "$GITHUB_OUTPUT"
+          echo "Version $v, core $(git rev-parse --short HEAD)"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Add Android SDK tools to PATH
+        run: |
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/build-tools/36.0.0" >> "$GITHUB_PATH"
+
+      - name: Install Android SDK components
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "platforms;android-36" \
+            "build-tools;35.0.0" \
+            "build-tools;36.0.0" \
+            "ndk;27.0.12077973"
+
+      - name: Configure Android NDK
+        run: |
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
+          test -d "$ANDROID_HOME/ndk/27.0.12077973"
+
+      - name: Install gomobile
+        run: |
+          set -euo pipefail
+          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260908204917-8b95e45f8d3e
+          go install golang.org/x/mobile/cmd/gobind@v0.0.0-20260908204917-8b95e45f8d3e
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          gomobile version || true
+          gomobile init
+
+      - name: Validate Android toolchain
+        run: |
+          set -euo pipefail
+          java -version
+          go version
+          gradle --version | sed -n '1,8p'
+          adb version | head -n 2
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" --version
+          "$ANDROID_HOME/build-tools/36.0.0/zipalign" -h >/dev/null
+
+      - name: Build the core (gomobile)
+        run: bash scripts/build-android-core.sh .
+
+      - name: Tests
+        run: ./gradlew --no-daemon :shared:jvmTest
+
+      - name: Restore release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            [ "$PUBLISH" = true ] && { echo "::error::ANDROID_KEYSTORE_BASE64 is required to publish a release"; exit 1; }
+            echo "No release keystore: assembleRelease will use the debug signing key for installable CI artifacts."; exit 0
+          fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/openflux-release.jks"
+          chmod 600 "$RUNNER_TEMP/openflux-release.jks"
+
+      - name: Build APKs
+        env:
+          ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/openflux-release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon -PappVersion=${{ steps.version.outputs.value }} :androidApp:assembleRelease
+
+      - name: Verify and inspect APKs
+        run: |
+          set -euo pipefail
+          found=0
+          while IFS= read -r -d '' apk; do
+            found=1
+            echo "=== $apk ==="
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose "$apk"
+            "$ANDROID_HOME/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$apk"
+            unzip -l "$apk" | grep -E '\.(so|dex)$' | head -n 20 || true
+          done < <(find androidApp/build/outputs/apk/release -name '*.apk' -print0)
+          [ "$found" -eq 1 ]
+
+      - name: Collect
+        run: |
+          mkdir -p dist
+          find androidApp/build/outputs/apk/release -name '*.apk' -print -exec cp {} dist/ \;
+          for apk in dist/*.apk; do mv "$apk" "dist/OpenFluxAndroid-${{ steps.version.outputs.value }}-$(basename "$apk")"; done
+          cd dist && sha256sum *.apk > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenFluxAndroid-${{ steps.version.outputs.value }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Deploy APK to server
+        if: success()
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          TARGET: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          set -e
+          if [ -z "$SSH_KEY" ] || [ -z "$HOST" ] || [ -z "$USER" ]; then
+            echo "Deploy secrets not set — skipping deployment."
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          target="${TARGET:-/root/github/OpenFlux/dist}"
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$USER@$HOST" "mkdir -p '$target'"
+          rsync -avz \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            dist/*.apk dist/SHA256SUMS.txt \
+            "$USER@$HOST:$target/"
+          echo "Deployed to $USER@$HOST:$target/"
+
+      - name: Publish release
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v${{ steps.version.outputs.value }}"
+          notes="APK универсальный или под архитектуру устройства. Ядро: \`$(git rev-parse --short HEAD)\`. Контрольные суммы — в \`SHA256SUMS.txt\`."
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+            gh release edit "$tag" --title "OpenFluxAndroid $tag" --notes "$notes"
+          else
+            gh release create "$tag" dist/* \
+              --title "OpenFluxAndroid $tag" \
+              --generate-notes \
+              --notes "$notes"
+          fi
