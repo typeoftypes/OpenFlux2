@@ -1,0 +1,2 @@
+ba31d0f (upstream OpenFlux 0.3.0+ node-v1.2.0)
+Android client is built from core/mobile; do not replace this core with an older transport implementation.

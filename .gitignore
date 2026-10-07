@@ -1,0 +1,14 @@
+# Android NDK/SDK
+android-sdk/
+**/ndk/
+
+# Native binaries
+*.a
+*.so
+*.o
+*.dylib
+
+# Build artifacts
+build/
+.gradle/
+local.properties

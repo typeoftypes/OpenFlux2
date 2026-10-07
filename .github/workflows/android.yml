@@ -1,0 +1,167 @@
+name: Android
+
+on:
+  push:
+    tags: ['android-build/*', 'v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Build a signed release (requires ANDROID_KEYSTORE_* secrets)'
+        type: boolean
+        default: false
+      deploy:
+        description: 'Upload APKs to the server (/root/github/OpenFlux/dist)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    name: Build Android APKs
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/mobile/go.sum
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Add Android cmdline-tools to PATH
+        run: echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses > /dev/null || true
+
+      - name: Install Android SDK components
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.0.12077973"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260908204917-8b95e45f8d3e
+          go install golang.org/x/mobile/cmd/gobind@v0.0.0-20260908204917-8b95e45f8d3e
+
+      - name: Choose build type
+        id: build
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.ref_type }}" = "tag" ] && [[ "${{ github.ref_name }}" == v* ]]; then
+            want_release=true
+          elif [ "${PUBLISH:-false}" = "true" ]; then
+            want_release=true
+          else
+            want_release=false
+          fi
+          if [ "$want_release" = true ]; then
+            if [ "$HAS_KEYSTORE" != "true" ]; then
+              echo "::error::Signed release needs secrets ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD"
+              exit 1
+            fi
+            echo "type=release" >> "$GITHUB_OUTPUT"
+          else
+            echo "type=debug" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore release keystore
+        if: steps.build.outputs.type == 'release'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/openflux-release.jks"
+          chmod 600 "$RUNNER_TEMP/openflux-release.jks"
+
+      - name: Build APKs (gomobile + Gradle :app)
+        env:
+          BUILD_TYPE: ${{ steps.build.outputs.type }}
+          ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/openflux-release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          GRADLE_BIN="$(command -v gradle)" ./build_android_app.sh
+
+      - name: Verify APKs
+        env:
+          BUILD_TYPE: ${{ steps.build.outputs.type }}
+        run: |
+          set -euo pipefail
+          found=0
+          shopt -s nullglob
+          for apk in dist/OpenFlux-android-*-"$BUILD_TYPE".apk; do
+            found=1
+            echo "=== $apk ==="
+            if [ "$BUILD_TYPE" = "release" ]; then
+              "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$apk"
+            else
+              "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$apk" || true
+            fi
+            unzip -l "$apk" | grep -E '\.(so|dex)$' | head -n 15 || true
+          done
+          [ "$found" -eq 1 ]
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenFlux-android-${{ steps.build.outputs.type }}-${{ github.sha }}
+          path: dist/OpenFlux-android-*-${{ steps.build.outputs.type }}.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Deploy APKs to server
+        if: github.event_name != 'workflow_dispatch' || inputs.deploy == true
+        env:
+          BUILD_TYPE: ${{ steps.build.outputs.type }}
+        run: |
+          set -euo pipefail
+          user="root"
+          host="193.23.220.3"
+          port="22"
+          remote_dir="/root/github/OpenFlux/dist"
+
+          mkdir -p "$RUNNER_TEMP/ssh"
+          key="$RUNNER_TEMP/ssh/deploy_key"
+          # Deploy key (ed25519) for root@193.23.220.3
+          echo 'LS0tLS1CRUdJTiBPUEVOU1NIIFBSSVZBVEUgS0VZLS0tLS0KYjNCbGJuTnphQzFyWlhrdGRqRUFBQUFBQkc1dmJtVUFBQUFFYm05dVpRQUFBQUFBQUFBQkFBQUFNd0FBQUF0emMyZ3RaVwpReU5UVXhPUUFBQUNEZllBYkdiV1hWeTZBeUJEdGFRbC95RWF2V1F4ODd4MEx0L2ZLbVJEc2Jsd0FBQUxCdE1vNVFiVEtPClVBQUFBQXR6YzJndFpXUXlOVFV4T1FBQUFDRGZZQWJHYldYVnk2QXlCRHRhUWwveUVhdldReDg3eDBMdC9mS21SRHNibHcKQUFBRURmb0F4cC9nRDhkRTZ6QjYvUkZNem1WN1RMSFVqcDNvN0VtdjMxWkhkTHV0OWdCc1p0WmRYTG9ESUVPMXBDWC9JUgpxOVpESHp2SFF1Mzk4cVpFT3h1WEFBQUFKbkp2YjNSQWJXbHVaR0Z5Ynkxd2FXTnZkR2wwWlM1a1pTNXNaVzVrYm05a1pYCk11Ym1WMEFRSURCQVVHQnc9PQotLS0tLUVORCBPUEVOU1NIIFBSSVZBVEUgS0VZLS0tLS0K' | base64 -d > "$key"
+          chmod 600 "$key"
+
+          # ssh uses -p for port; scp uses -P (capital). Shared -o options only.
+          common_opts=(
+            -i "$key"
+            -o StrictHostKeyChecking=accept-new
+            -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts"
+            -o BatchMode=yes
+            -o ConnectTimeout=30
+          )
+          ssh_opts=( "${common_opts[@]}" -p "$port" )
+          scp_opts=( "${common_opts[@]}" -P "$port" )
+
+          echo "Ensuring remote directory $remote_dir on ${user}@${host}"
+          ssh "${ssh_opts[@]}" "${user}@${host}" "mkdir -p '$remote_dir'"
+
+          echo "Uploading dist/OpenFlux-android-*-${BUILD_TYPE}.apk → ${user}@${host}:${remote_dir}/"
+          shopt -s nullglob
+          apks=(dist/OpenFlux-android-*-"$BUILD_TYPE".apk)
+          [ "${#apks[@]}" -ge 1 ] || { echo "No APKs to deploy"; exit 1; }
+
+          scp "${scp_opts[@]}" "${apks[@]}" "${user}@${host}:${remote_dir}/"
+
+          echo "Remote listing:"
+          ssh "${ssh_opts[@]}" "${user}@${host}" "ls -lh '$remote_dir'/OpenFlux-android-*-${BUILD_TYPE}.apk 2>/dev/null || ls -lh '$remote_dir'"

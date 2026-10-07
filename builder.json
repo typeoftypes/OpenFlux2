@@ -1,0 +1,21 @@
+{
+  "project": "OpenFlux",
+  "platform": "ios",
+  "github": {
+    "owner": "typeoftypes",
+    "repo": "OpenFlux2"
+  },
+  "provider": "github",
+  "codemagic": {},
+  "bitrise": {},
+  "ios": {
+    "path": "ios-app",
+    "scheme": "OpenFlux"
+  },
+  "flutter": {
+    "watch": {}
+  },
+  "reactNative": {},
+  "kmp": {},
+  "mobai": {}
+}
