@@ -8,10 +8,15 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.VpnService;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.os.SystemClock;
+import android.os.PowerManager;
 
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -46,6 +51,7 @@ public final class OpenFluxTunnelService extends VpnService {
     private static final int NOTIFICATION_ID = 7;
     private static final String CONNECTION_PREFS = "openflux_active_connection";
     private static final long RECONNECT_AFTER_MS = 6_000;
+    private static final long RECONNECT_MAX_MS = 30_000;
     private static volatile boolean running;
     private static volatile String status = "Остановлено";
     private static volatile String lastError = "";
@@ -59,6 +65,11 @@ public final class OpenFluxTunnelService extends VpnService {
     private final AtomicInteger generation = new AtomicInteger();
     private final AtomicBoolean awaitingCaptcha = new AtomicBoolean();
     private final AtomicBoolean reconnecting = new AtomicBoolean();
+    private final AtomicInteger reconnectAttempt = new AtomicInteger();
+    private volatile long nextReconnectAtMs;
+    private PowerManager.WakeLock tunnelWakeLock;
+    private ConnectivityManager connectivityManager;
+    private ConnectivityManager.NetworkCallback networkCallback;
     // Session mode (Mobile.startSession): the profile's transport list as
     // JSON, or empty for the classic single-transport mode.
     private volatile String sessionTransports = "";
@@ -185,6 +196,56 @@ public final class OpenFluxTunnelService extends VpnService {
         return String.format(Locale.US, "%.1f МБ/с", bytesPerSecond / (1024.0 * 1024.0));
     }
 
+    private void acquireTunnelWakeLock() {
+        if (tunnelWakeLock != null && tunnelWakeLock.isHeld()) return;
+        PowerManager power = (PowerManager) getSystemService(POWER_SERVICE);
+        if (power == null) return;
+        tunnelWakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "OpenFlux:tunnel");
+        tunnelWakeLock.setReferenceCounted(false);
+        tunnelWakeLock.acquire();
+    }
+
+    private void releaseTunnelWakeLock() {
+        if (tunnelWakeLock != null) {
+            try { if (tunnelWakeLock.isHeld()) tunnelWakeLock.release(); } catch (RuntimeException ignored) {}
+            tunnelWakeLock = null;
+        }
+    }
+
+    private void registerNetworkCallback() {
+        if (connectivityManager != null || !active) return;
+        ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+        if (cm == null) return;
+        try {
+            NetworkRequest request = new NetworkRequest.Builder()
+                    .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    .build();
+            ConnectivityManager.NetworkCallback callback = new ConnectivityManager.NetworkCallback() {
+                @Override public void onAvailable(Network network) {
+                    if (active && running && tunnel != null && !Mobile.isConnected()) requestReconnect();
+                }
+                @Override public void onLost(Network network) {
+                    if (active && running && disconnectedSinceMs == 0L)
+                        disconnectedSinceMs = SystemClock.elapsedRealtime();
+                }
+            };
+            cm.registerNetworkCallback(request, callback);
+            connectivityManager = cm;
+            networkCallback = callback;
+        } catch (RuntimeException ignored) {
+            connectivityManager = null;
+            networkCallback = null;
+        }
+    }
+
+    private void unregisterNetworkCallback() {
+        if (connectivityManager != null && networkCallback != null) {
+            try { connectivityManager.unregisterNetworkCallback(networkCallback); } catch (RuntimeException ignored) {}
+        }
+        connectivityManager = null;
+        networkCallback = null;
+    }
+
     private void startSpeedUpdates() {
         bytesSent.set(0);
         bytesReceived.set(0);
@@ -307,6 +368,7 @@ public final class OpenFluxTunnelService extends VpnService {
 
         active = true;
         running = true;
+        acquireTunnelWakeLock();
         status = "Подключение…";
         lastError = "";
         int session = generation.incrementAndGet();
@@ -387,6 +449,10 @@ public final class OpenFluxTunnelService extends VpnService {
 
         if (!isCurrent(session)) return;
         status = "Подключено";
+        reconnectAttempt.set(0);
+        nextReconnectAtMs = 0L;
+        acquireTunnelWakeLock();
+        registerNetworkCallback();
         if (connectedAtMillis == 0L) connectedAtMillis = System.currentTimeMillis();
         startSpeedUpdates();
         FileInputStream input = tunnelInput;
@@ -530,11 +596,8 @@ public final class OpenFluxTunnelService extends VpnService {
             running = true;
             closeTunnel();
             Mobile.stop();
-            notificationHandler.postDelayed(() -> {
-                if (active && running && !reconnecting.get()) {
-                    requestReconnect();
-                }
-            }, 5000);
+            nextReconnectAtMs = Math.min(nextReconnectAtMs, SystemClock.elapsedRealtime() + 1000);
+            notificationHandler.postDelayed(this::requestReconnect, 1000);
             return;
         }
         lastError = message == null ? "Неизвестная ошибка" : message;
@@ -545,25 +608,37 @@ public final class OpenFluxTunnelService extends VpnService {
         stopSpeedUpdates();
         closeTunnel();
         Mobile.stop();
+        unregisterNetworkCallback();
+        releaseTunnelWakeLock();
         running = false;
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
 
     private void requestReconnect() {
-        if (!active || !running || !reconnecting.compareAndSet(false, true)) return;
+        if (!active || !running || reconnecting.get()) return;
+        long now = SystemClock.elapsedRealtime();
+        if (now < nextReconnectAtMs) return;
+        int attempt = reconnectAttempt.getAndIncrement();
+        long delay = Math.min(RECONNECT_MAX_MS, 1_000L << Math.min(attempt, 5));
+        nextReconnectAtMs = now + delay;
+        if (!reconnecting.compareAndSet(false, true)) return;
         final int previous = generation.incrementAndGet();
+        status = "Переподключение…";
         workers.execute(() -> {
             try {
                 if (!active || !running || generation.get() != previous) return;
                 closeTunnel();
                 Mobile.stop();
                 int reconnectSession = generation.incrementAndGet();
-                status = "Переподключение…";
                 startTunnel(activeTransport, activeUrl, activeSecret, activeCodec,
                         activeMaxToken, activeMaxUid, activeDns, activeMtu, reconnectSession);
             } finally {
                 reconnecting.set(false);
+                if (active && running && !Mobile.isConnected()) {
+                    long retry = Math.min(RECONNECT_MAX_MS, 1_000L << Math.min(reconnectAttempt.get(), 5));
+                    nextReconnectAtMs = SystemClock.elapsedRealtime() + retry;
+                }
             }
         });
     }
@@ -575,6 +650,8 @@ public final class OpenFluxTunnelService extends VpnService {
         stopSpeedUpdates();
         closeTunnel();
         Mobile.stop();
+        unregisterNetworkCallback();
+        releaseTunnelWakeLock();
         running = false;
         status = "Остановлено";
         lastError = "";
@@ -583,12 +660,24 @@ public final class OpenFluxTunnelService extends VpnService {
         stopSelf();
     }
 
+    @Override public void onTaskRemoved(Intent rootIntent) {
+        // Swiping the UI task away must not stop the VPN. The foreground
+        // service owns the tunnel and Android will keep it alive.
+        if (active && running) {
+            status = Mobile.isConnected() ? "Подключено" : "Переподключение…";
+            return;
+        }
+        super.onTaskRemoved(rootIntent);
+    }
+
     @Override public void onDestroy() {
         generation.incrementAndGet();
         active = false;
         stopSpeedUpdates();
         closeTunnel();
         Mobile.stop();
+        unregisterNetworkCallback();
+        releaseTunnelWakeLock();
         running = false;
         if (!"Ошибка".equals(status)) status = "Остановлено";
         connectedAtMillis = 0L;

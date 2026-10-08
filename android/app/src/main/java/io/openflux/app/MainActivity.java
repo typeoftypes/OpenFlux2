@@ -116,6 +116,7 @@ public final class MainActivity extends Activity {
     static final String SETTINGS_PREFS_NAME = "openflux_settings";
     private static final int TUNNEL_PERMISSION_REQUEST = 42;
     private static final int NOTIFICATION_PERMISSION_REQUEST = 43;
+    private boolean pendingTunnelStartAfterBackgroundAccess = false;
     private static final int NODE_WIZARD_REQUEST = 44;
     private static final int QR_IMAGE_REQUEST = 45;
     private static final int DEFAULT_MTU = 1400;
@@ -2072,10 +2073,15 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void requestIgnoreBatteryOptimizations() {
+    private boolean isIgnoringBatteryOptimizations() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;
         PowerManager powerManager = (PowerManager) getSystemService(POWER_SERVICE);
-        if (powerManager != null && powerManager.isIgnoringBatteryOptimizations(getPackageName())) {
-            Toast.makeText(this, "Оптимизация батареи уже отключена для приложения", Toast.LENGTH_SHORT).show();
+        return powerManager != null && powerManager.isIgnoringBatteryOptimizations(getPackageName());
+    }
+
+    private void requestIgnoreBatteryOptimizations() {
+        if (isIgnoringBatteryOptimizations()) {
+            Toast.makeText(this, "Ограничения батареи уже отключены для OpenFlux", Toast.LENGTH_SHORT).show();
             return;
         }
         try {
@@ -2084,6 +2090,25 @@ public final class MainActivity extends Activity {
         } catch (Exception exception) {
             startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
         }
+    }
+
+    private void showBackgroundAccessDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("Разрешить работу в фоне?")
+                .setMessage("Чтобы VPN не отключался при выключении экрана или сворачивании OpenFlux, разрешите приложению работать без ограничений батареи. Android откроет системный экран, где это можно разрешить.")
+                .setPositiveButton("Разрешить", (dialog, which) -> requestIgnoreBatteryOptimizations())
+                .setNegativeButton("Позже", (dialog, which) -> {
+                    pendingTunnelStartAfterBackgroundAccess = false;
+                    Toast.makeText(this, "Без этого разрешения Android может ограничить работу VPN в фоне", Toast.LENGTH_LONG).show();
+                })
+                .setCancelable(false)
+                .show();
+    }
+
+    private void startTunnelAfterVpnPermission() {
+        Intent permission = VpnService.prepare(this);
+        if (permission != null) startActivityForResult(permission, TUNNEL_PERMISSION_REQUEST);
+        else startTunnel();
     }
 
     // setInitialVisibility sets a view's starting visibility/alpha without
@@ -3830,9 +3855,26 @@ public final class MainActivity extends Activity {
             startProxy();
             return;
         }
-        Intent permission = VpnService.prepare(this);
-        if (permission != null) startActivityForResult(permission, TUNNEL_PERMISSION_REQUEST);
-        else startTunnel();
+        // Ask for the Android background exemptions before starting the VPN.
+        // There is no single runtime "background permission" on Android:
+        // battery optimization is the relevant system restriction for a long-
+        // lived VPN/foreground service. The user can explicitly grant it.
+        if (!isIgnoringBatteryOptimizations()) {
+            pendingTunnelStartAfterBackgroundAccess = true;
+            showBackgroundAccessDialog();
+            return;
+        }
+        requestNotificationPermissionIfNeeded();
+        startTunnelAfterVpnPermission();
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (pendingTunnelStartAfterBackgroundAccess && isIgnoringBatteryOptimizations()) {
+            pendingTunnelStartAfterBackgroundAccess = false;
+            requestNotificationPermissionIfNeeded();
+            startTunnelAfterVpnPermission();
+        }
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
