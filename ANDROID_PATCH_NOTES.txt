@@ -1,0 +1,14 @@
+OpenFluxAndroid background stability patch
+
+Base:
+- p1neappleXpress/OpenFluxAndroid
+- OpenFlux core supplied by the user in OpenFlux-Android-core-upd.zip
+
+Changes:
+- CoreService uses START_STICKY for long-lived VPN foreground operation.
+- Intentional disconnects remain START_NOT_STICKY.
+- Transient CoreService destruction no longer immediately disconnects an active Run.
+- The connection service re-binds a recreated foreground service while the Run is active.
+- Added Android battery-optimization exemption onboarding.
+- Added REQUEST_IGNORE_BATTERY_OPTIMIZATIONS manifest permission.
+- New core is embedded under OpenFlux/ so build_android_core.sh uses the supplied core.
