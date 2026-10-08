@@ -1,4 +1,8 @@
 build/
+# Android SDK
+android-sdk/
+# Android SDK
+android-sdk/*
 dist/
 output/
 github_output/
@@ -64,3 +68,4 @@ watch_stats.sh
 *.log
 /openflux
 *.bak
+android-sdk/
