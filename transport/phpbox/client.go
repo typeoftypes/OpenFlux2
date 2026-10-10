@@ -3,13 +3,13 @@ package phpbox
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
-
-	"github.com/p1neappleXpress/OpenFlux/transport"
 )
 
 // Client is a Mux over the direct-HTTP two-channel carrier - for a phpbox
@@ -34,7 +34,7 @@ func NewClient(endpoint, token, session string) *Client {
 // streamproxy and tunnel.StreamNet create the mux themselves.
 func NewHTTPCarrier(endpoint, token, session string) Carrier {
 	if session == "" {
-		session = transport.GenerateSessionID()
+		session = randomSessionID()
 	}
 	return newHTTPCarrier(endpoint, token, session)
 }
@@ -71,15 +71,12 @@ func ParseEndpoint(ref string) (endpoint, token string) {
 // bytes into short POSTs (up), because such hosts buffer request bodies but
 // stream responses.
 //
-// Each request is shaped like browser XHR/fetch to a PHP site (realistic
-// User-Agent, Sec-CH-UA, Origin, Referer, Sec-Fetch-*) so shared hosting and
-// middleboxes see ordinary web traffic rather than a bare tunnel client.
+// Requests carry ordinary browser XHR headers so shared hosting sees web
+// traffic, not a bare tunnel client. No dependency on transport.masking types.
 type httpCarrier struct {
 	endpoint, token, session string
 	http                     *http.Client
-	profile                  transport.BrowserProfile
-	stealth                  transport.StealthConfig
-	browse                   *transport.BrowseSession
+	userAgent                string
 
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -90,18 +87,14 @@ type httpCarrier struct {
 
 func newHTTPCarrier(endpoint, token, session string) *httpCarrier {
 	ctx, cancel := context.WithCancel(context.Background())
-	cfg := transport.DefaultConfig()
-	profile := transport.GetRandomBrowserProfile()
-	if cfg.BrowserProfile != nil {
-		profile = *cfg.BrowserProfile
+	if session == "" {
+		session = randomSessionID()
 	}
 	return &httpCarrier{
-		endpoint: strings.TrimSpace(endpoint),
-		token:    token,
-		session:  session,
-		profile:  profile,
-		stealth:  cfg.StealthConfig,
-		browse:   transport.NewBrowseSession(),
+		endpoint:  strings.TrimSpace(endpoint),
+		token:     token,
+		session:   session,
+		userAgent: browserUA(),
 		http: &http.Client{
 			Timeout: 0, // the down-poll is long-lived
 			Transport: &http.Transport{
@@ -153,27 +146,21 @@ func originOf(endpoint string) string {
 	return u.Scheme + "://" + u.Host
 }
 
-// maskRequest applies a browser fingerprint so the request looks like a
-// same-origin XHR/fetch from a tab that opened the host, not a dedicated client.
+// maskRequest applies browser-like XHR headers without importing transport.masking.
 func (h *httpCarrier) maskRequest(req *http.Request) {
-	kind := transport.KindXHR
-	if h.browse != nil {
-		kind = h.browse.NextKind()
-		if kind == transport.KindNavigate {
-			kind = transport.KindXHR // long-poll/API is never a top-level navigation
-		}
-	}
-	transport.ApplyKindHeaders(req, h.profile, kind)
+	req.Header.Set("User-Agent", h.userAgent)
+	req.Header.Set("Accept", "application/octet-stream, */*;q=0.8")
+	req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	req.Header.Set("Sec-Fetch-Dest", "empty")
+	req.Header.Set("Sec-Fetch-Mode", "cors")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	req.Header.Set("Cache-Control", "no-cache")
 	if origin := originOf(h.endpoint); origin != "" {
 		req.Header.Set("Origin", origin)
 		req.Header.Set("Referer", origin+"/")
 	}
-	req.Header.Set("Sec-Fetch-Dest", "empty")
-	req.Header.Set("Sec-Fetch-Mode", "cors")
-	req.Header.Set("Sec-Fetch-Site", "same-origin")
-	req.Header.Set("Accept", "application/octet-stream, */*;q=0.8")
-	req.Header.Set("X-Requested-With", "XMLHttpRequest")
-	req.Header.Set("Cache-Control", "no-cache")
 }
 
 // upLoop batches queued bytes and POSTs them to the up route.
@@ -184,10 +171,6 @@ func (h *httpCarrier) upLoop() {
 	flush := func() {
 		if len(buf) == 0 {
 			return
-		}
-		// Short jitter only — BrowseSession idle delays would stall the tunnel.
-		if h.stealth.EnableJitter {
-			time.Sleep(h.stealth.ApplyJitter())
 		}
 		body := buf
 		buf = buf[:0]
@@ -223,32 +206,54 @@ func (h *httpCarrier) upLoop() {
 	}
 }
 
-// downLoop holds the streaming GET and feeds exit->client bytes to the mux
-// until the exit caps it or it errors, then reports the session closed.
+// downLoop long-polls the down route and delivers chunks to recv.
 func (h *httpCarrier) downLoop() {
-	if h.onClosed != nil {
-		defer h.onClosed()
-	}
-	req, err := http.NewRequestWithContext(h.ctx, http.MethodGet, h.url("down"), nil)
-	if err != nil {
-		return
-	}
-	h.maskRequest(req)
-	req.Header.Set("Accept", "*/*")
-	resp, err := h.http.Do(req)
-	if err != nil {
-		return
-	}
-	defer resp.Body.Close()
-
-	tmp := make([]byte, 32768)
-	for {
-		n, rerr := resp.Body.Read(tmp)
-		if n > 0 && h.recv != nil {
-			h.recv(tmp[:n])
+	defer func() {
+		if h.onClosed != nil {
+			h.onClosed()
 		}
-		if rerr != nil {
+	}()
+	for {
+		if h.ctx.Err() != nil {
 			return
 		}
+		req, err := http.NewRequestWithContext(h.ctx, http.MethodGet, h.url("down"), nil)
+		if err != nil {
+			return
+		}
+		h.maskRequest(req)
+		resp, err := h.http.Do(req)
+		if err != nil {
+			select {
+			case <-h.ctx.Done():
+				return
+			case <-time.After(500 * time.Millisecond):
+				continue
+			}
+		}
+		func() {
+			defer resp.Body.Close()
+			buf := make([]byte, 32*1024)
+			for {
+				n, err := resp.Body.Read(buf)
+				if n > 0 && h.recv != nil {
+					h.recv(append([]byte(nil), buf[:n]...))
+				}
+				if err != nil {
+					return
+				}
+			}
+		}()
 	}
+}
+
+func randomSessionID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("%x", b[:])
+}
+
+func browserUA() string {
+	// Fixed modern Chrome UA — consistent fingerprint for the session.
+	return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
 }
