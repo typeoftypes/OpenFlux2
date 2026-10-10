@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/p1neappleXpress/OpenFlux/transport/control"
+	"github.com/typeoftypes/OpenFlux2/transport/control"
 )
 
 // negotiationWire is a fake in-process transport: whatever is Sent goes

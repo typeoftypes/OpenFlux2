@@ -99,13 +99,13 @@ uname -m
 - `aarch64` or `arm64` → get `openflux-linux-arm64` (ARM servers, common on
   some cloud providers' ARM instance types).
 
-Download it from the [latest upstream release](https://github.com/p1neappleXpress/OpenFlux/releases/latest)
+Download it from the [latest upstream release](https://github.com/typeoftypes/OpenFlux2/releases/latest)
 and make it executable (example for amd64 - swap the filename for
 `openflux-linux-arm64` if you're on ARM):
 
 ```bash
 mkdir -p /root/openflux && cd /root/openflux
-curl -LO https://github.com/p1neappleXpress/OpenFlux/releases/latest/download/openflux-linux-amd64
+curl -LO https://github.com/typeoftypes/OpenFlux2/releases/latest/download/openflux-linux-amd64
 mv openflux-linux-amd64 openflux
 chmod +x openflux
 ```

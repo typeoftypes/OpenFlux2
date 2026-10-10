@@ -1,10 +1,10 @@
 package transport_test
 
 import (
-	"github.com/p1neappleXpress/OpenFlux/transport"
-	"github.com/p1neappleXpress/OpenFlux/transport/cupsonline"
-	"github.com/p1neappleXpress/OpenFlux/transport/mailru"
-	"github.com/p1neappleXpress/OpenFlux/transport/yandex"
+	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/typeoftypes/OpenFlux2/transport/cupsonline"
+	"github.com/typeoftypes/OpenFlux2/transport/mailru"
+	"github.com/typeoftypes/OpenFlux2/transport/yandex"
 )
 
 // Compile-time guarantees that every HTTP-based transport implements

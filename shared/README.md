@@ -1,8 +1,8 @@
 # OpenFluxClientShared
 
 The Compose Multiplatform UI and business logic shared by
-[OpenFluxAndroid](https://github.com/p1neappleXpress/OpenFluxAndroid) and
-[OpenFluxDesktop](https://github.com/p1neappleXpress/OpenFluxDesktop): profile
+[OpenFluxAndroid](https://github.com/typeoftypes/OpenFlux2Android) and
+[OpenFluxDesktop](https://github.com/typeoftypes/OpenFlux2Desktop): profile
 and session models, the connection screens, the node-deployment wizard, and
 the service interfaces each platform implements (core process/IPC, the
 built-in browser, settings storage).
@@ -37,7 +37,7 @@ here with the author's agreement. Full commit history and authorship are
 preserved as extracted from that repository. **Huge thanks to
 [@meepo161](https://github.com/meepo161)** for building it.
 
-It talks to the [OpenFlux](https://github.com/p1neappleXpress/OpenFlux) core
+It talks to the [OpenFlux](https://github.com/typeoftypes/OpenFlux2) core
 (the tunnel/transports/protocol) through the service interfaces in
 `commonMain`, implemented per platform in the consuming app. That core's own
 `openflux://` links and QR codes, and its cups.online transport, were

@@ -4,7 +4,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/typeoftypes/OpenFlux2/transport"
 )
 
 // Cookies handed in from an out-of-band solve must reach every Yandex host

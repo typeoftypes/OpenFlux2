@@ -10,7 +10,7 @@ import (
 
 	"github.com/dop251/goja"
 
-	"github.com/p1neappleXpress/OpenFlux/utils"
+	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
 // maxServerRequestBody caps one request's body on a script's own HTTP

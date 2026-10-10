@@ -19,10 +19,10 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
 	"gvisor.dev/gvisor/pkg/waiter"
 
-	"github.com/p1neappleXpress/OpenFlux/network"
-	"github.com/p1neappleXpress/OpenFlux/transport"
-	"github.com/p1neappleXpress/OpenFlux/tunnel/l3"
-	"github.com/p1neappleXpress/OpenFlux/utils"
+	"github.com/typeoftypes/OpenFlux2/network"
+	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/typeoftypes/OpenFlux2/tunnel/l3"
+	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
 // ExitMode выбирает, как выходная нода общается с интернетом.

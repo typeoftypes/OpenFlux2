@@ -100,13 +100,13 @@ uname -m
 - `aarch64` или `arm64` → берите `openflux-linux-arm64` (ARM-серверы, часто
   встречаются у облачных провайдеров с ARM-инстансами).
 
-Скачайте бинарник из [последнего релиза апстрима](https://github.com/p1neappleXpress/OpenFlux/releases/latest)
+Скачайте бинарник из [последнего релиза апстрима](https://github.com/typeoftypes/OpenFlux2/releases/latest)
 и сделайте исполняемым (пример для amd64 - замените имя файла на
 `openflux-linux-arm64`, если у вас ARM):
 
 ```bash
 mkdir -p /root/openflux && cd /root/openflux
-curl -LO https://github.com/p1neappleXpress/OpenFlux/releases/latest/download/openflux-linux-amd64
+curl -LO https://github.com/typeoftypes/OpenFlux2/releases/latest/download/openflux-linux-amd64
 mv openflux-linux-amd64 openflux
 chmod +x openflux
 ```

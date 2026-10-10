@@ -270,8 +270,8 @@ maintainer's multi-transport work folded together) and the first cut by
 
 ### Credits
 
-`androidApp`/`desktopApp`/`shared` for [OpenFluxAndroid](https://github.com/p1neappleXpress/OpenFluxAndroid)
-and [OpenFluxDesktop](https://github.com/p1neappleXpress/OpenFluxDesktop) now
+`androidApp`/`desktopApp`/`shared` for [OpenFluxAndroid](https://github.com/typeoftypes/OpenFlux2Android)
+and [OpenFluxDesktop](https://github.com/typeoftypes/OpenFlux2Desktop) now
 run the Compose Multiplatform app built by [@meepo161](https://github.com/meepo161)
 in [OpenFluxClient](https://github.com/meepo161/OpenFluxClient), moved into
 those repositories with his agreement.

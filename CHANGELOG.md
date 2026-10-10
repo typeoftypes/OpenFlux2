@@ -17,9 +17,9 @@ All notable changes to OpenFluxAndroid. Format loosely follows
   (no FTP), takes a key of your own on an FTP install, opens the node's panel in
   the browser, and shows which generation serves («работает · поколение N»).
   Bumps `OpenFlux` to
-  [`d245db7`](https://github.com/p1neappleXpress/OpenFlux/commit/d245db7) and
+  [`d245db7`](https://github.com/typeoftypes/OpenFlux2/commit/d245db7) and
   `shared` to
-  [`98572e2`](https://github.com/p1neappleXpress/OpenFluxClientShared/commit/98572e2).
+  [`98572e2`](https://github.com/typeoftypes/OpenFlux2ClientShared/commit/98572e2).
 
 ### Added
 
@@ -57,16 +57,16 @@ All notable changes to OpenFluxAndroid. Format loosely follows
   12–13, Rocky 9, Alma 8, Fedora 42, Arch and openSUSE Leap 15.6; on the
   server `node-install.sh list` shows the channels, `remove <channel>`
   deletes one and `uninstall` removes the node completely.
-- Bumps `OpenFlux` to [`39b3356`](https://github.com/p1neappleXpress/OpenFlux/commit/39b335655da147f87271c9ebe43e799d14977e9b)
-  and `shared` to [`383c2de`](https://github.com/p1neappleXpress/OpenFluxClientShared/commit/383c2de303dc0a568739a7020e2dec17285de558).
+- Bumps `OpenFlux` to [`39b3356`](https://github.com/typeoftypes/OpenFlux2/commit/39b335655da147f87271c9ebe43e799d14977e9b)
+  and `shared` to [`383c2de`](https://github.com/typeoftypes/OpenFlux2ClientShared/commit/383c2de303dc0a568739a7020e2dec17285de558).
 
 ## [2.1.0] - 2026-09-28
 
 ### Changed
 
 - Share links are read and made by the core, the way every client does:
-  bumps `OpenFlux` to [`2ec01a5`](https://github.com/p1neappleXpress/OpenFlux/commit/2ec01a5) (core 0.2.0) and `shared` to
-  [`ae5e59a`](https://github.com/p1neappleXpress/OpenFluxClientShared/commit/ae5e59a).
+  bumps `OpenFlux` to [`2ec01a5`](https://github.com/typeoftypes/OpenFlux2/commit/2ec01a5) (core 0.2.0) and `shared` to
+  [`ae5e59a`](https://github.com/typeoftypes/OpenFlux2ClientShared/commit/ae5e59a).
   - A link that picked up line breaks, spaces, non-breaking or zero-width
     characters, padding or the standard base64 alphabet on the way imports,
     as on iOS, instead of «Ссылка повреждена».
@@ -83,7 +83,7 @@ All notable changes to OpenFluxAndroid. Format loosely follows
 ### Fixed
 
 - Clients and nodes built from different trees now connect: bumps `OpenFlux`
-  to [`f8f3476`](https://github.com/p1neappleXpress/OpenFlux/commit/f8f34767a5732febd5965ac6cf95bad51b70cf99).
+  to [`f8f3476`](https://github.com/typeoftypes/OpenFlux2/commit/f8f34767a5732febd5965ac6cf95bad51b70cf99).
   - A classic profile with a key runs the Session and falls back to the
     classic layering for a classic or older node, on the same carrier; a
     node set up as classic serves both kinds of client. Nodes set up for
@@ -107,7 +107,7 @@ All notable changes to OpenFluxAndroid. Format loosely follows
   `.conf`-only `Role = exit` (every node-wizard deployment) left the core's
   internal exit/client flag stuck at its pre-config value, so the exit
   never answered the handshake and crash-looped instead. Bumps `OpenFlux`
-  to [`e8f735a`](https://github.com/p1neappleXpress/OpenFlux/commit/e8f735a98c1ba9e091956416fde5c5ef92d3cd66).
+  to [`e8f735a`](https://github.com/typeoftypes/OpenFlux2/commit/e8f735a98c1ba9e091956416fde5c5ef92d3cd66).
 - The startup log always printed `Transport: yandex` for session/multi-transport
   profiles regardless of which transports were actually configured (a stale
   flag default, not a functional bug — the correct transports ran either
@@ -118,10 +118,10 @@ All notable changes to OpenFluxAndroid. Format loosely follows
 - An exit node always listened for Direct (TCP on `0.0.0.0:<port>`) and put
   it into the clients' link, even when the profile had no Direct transport.
   It now listens only when the profile has Direct, at that transport's
-  priority ([#11](https://github.com/p1neappleXpress/OpenFluxAndroid/pull/11)).
+  priority ([#11](https://github.com/typeoftypes/OpenFlux2Android/pull/11)).
 - A phone exit on cups.online without room codes put cups.online into its
   link with no rooms, so clients could not join; the link now carries the
-  rooms the node created ([OpenFlux#123](https://github.com/p1neappleXpress/OpenFlux/pull/123)).
+  rooms the node created ([OpenFlux#123](https://github.com/typeoftypes/OpenFlux2/pull/123)).
 
 ### Added
 
@@ -130,7 +130,7 @@ All notable changes to OpenFluxAndroid. Format loosely follows
   switch. The embedded core used to run at -dd on every connect whatever
   the switch said — formatting a log line for every packet — and the
   switch only hid those lines from the log view; the level now reaches the
-  core itself ([OpenFlux#121](https://github.com/p1neappleXpress/OpenFlux/pull/121)).
+  core itself ([OpenFlux#121](https://github.com/typeoftypes/OpenFlux2/pull/121)).
   The default is Выкл: choose -dd to see transport errors, handshakes and
   the encryption (KDF) context.
 - Node-wizard deployment logging: every SSH/RPC call and the wizard's own
@@ -160,8 +160,8 @@ with his agreement.
   own address.
 - A node-deployment wizard: install an exit node on your own VPS over SSH
   from the app.
-- `shared/` and `OpenFlux/` as git submodules ([OpenFluxClientShared](https://github.com/p1neappleXpress/OpenFluxClientShared)
-  and the [OpenFlux](https://github.com/p1neappleXpress/OpenFlux) core), so
+- `shared/` and `OpenFlux/` as git submodules ([OpenFluxClientShared](https://github.com/typeoftypes/OpenFlux2ClientShared)
+  and the [OpenFlux](https://github.com/typeoftypes/OpenFlux2) core), so
   this app always builds against one pinned, single copy of each instead of
   a vendored one.
 - `.github/workflows/release.yml`: a `v*` tag builds and signs a release

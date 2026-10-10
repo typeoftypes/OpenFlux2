@@ -24,7 +24,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/p1neappleXpress/OpenFlux/transport/script"
+	"github.com/typeoftypes/OpenFlux2/transport/script"
 )
 
 func main() {

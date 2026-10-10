@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/p1neappleXpress/OpenFlux/socks5"
-	"github.com/p1neappleXpress/OpenFlux/streamproxy"
-	"github.com/p1neappleXpress/OpenFlux/transport"
-	"github.com/p1neappleXpress/OpenFlux/tunnel"
-	"github.com/p1neappleXpress/OpenFlux/utils"
+	"github.com/typeoftypes/OpenFlux2/socks5"
+	"github.com/typeoftypes/OpenFlux2/streamproxy"
+	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/typeoftypes/OpenFlux2/tunnel"
+	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
 // StartStreamProxy is StartProxy for the phpbox stream mode: the exit is a PHP

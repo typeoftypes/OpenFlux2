@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/p1neappleXpress/OpenFlux/transport"
-	"github.com/p1neappleXpress/OpenFlux/transport/manager"
+	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/typeoftypes/OpenFlux2/transport/manager"
 )
 
 // Android side of the core's out-of-band captcha/login flow. Desktop and iOS

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/typeoftypes/OpenFlux2/transport"
 )
 
 var errTUNUnsupported = errors.New("utun client is only supported on macOS")

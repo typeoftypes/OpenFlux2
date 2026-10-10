@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/p1neappleXpress/OpenFlux/transport/phpbox"
+	"github.com/typeoftypes/OpenFlux2/transport/phpbox"
 )
 
 // loopCarrier wires the client mux to a tiny in-process phpbox exit.

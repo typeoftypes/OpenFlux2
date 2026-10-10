@@ -3,7 +3,7 @@ package l3
 import (
 	"encoding/binary"
 	"errors"
-	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/typeoftypes/OpenFlux2/transport"
 	"sync/atomic"
 	"time"
 )

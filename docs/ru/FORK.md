@@ -1,7 +1,7 @@
 # О форке
 
 Этот репозиторий - изменённый форк
-[p1neappleXpress/OpenFlux](https://github.com/p1neappleXpress/OpenFlux).
+[p1neappleXpress/OpenFlux](https://github.com/typeoftypes/OpenFlux2).
 Он сохраняет историю Git апстрима и распространяется по той же лицензии
 GPL-3.0-or-later.
 

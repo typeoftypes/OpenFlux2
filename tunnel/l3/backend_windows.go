@@ -12,7 +12,7 @@ import (
 	"github.com/xjasonlyu/windivert-go"
 	"golang.org/x/sys/windows"
 
-	"github.com/p1neappleXpress/OpenFlux/utils"
+	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
 // Windows raw sockets cannot send TCP, so this backend uses WinDivert

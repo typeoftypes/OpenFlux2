@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/p1neappleXpress/OpenFlux/utils"
+	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
 // EnhancedHTTPTransport wraps HTTP transports with stability and masking

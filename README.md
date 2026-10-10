@@ -1,6 +1,6 @@
 # OpenFluxAndroid
 
-Android client for [OpenFlux](https://github.com/p1neappleXpress/OpenFlux):
+Android client for [OpenFlux](https://github.com/typeoftypes/OpenFlux2):
 system VPN or local SOCKS5, multi-transport sessions with automatic
 failover, AES-256-GCM encryption, and the in-app flow for passing a
 transport's check (SmartCaptcha, a login wall) through the built-in browser.
@@ -16,7 +16,7 @@ tag.
 ## Getting the code
 
 ```bash
-git clone --recurse-submodules https://github.com/p1neappleXpress/OpenFluxAndroid.git
+git clone --recurse-submodules https://github.com/typeoftypes/OpenFlux2Android.git
 ```
 
 Already cloned without `--recurse-submodules`?
@@ -27,10 +27,10 @@ git submodule update --init --recursive
 
 This checks out two submodules:
 
-- `shared/` → [OpenFluxClientShared](https://github.com/p1neappleXpress/OpenFluxClientShared),
+- `shared/` → [OpenFluxClientShared](https://github.com/typeoftypes/OpenFlux2ClientShared),
   the Compose Multiplatform UI and models shared with
-  [OpenFluxDesktop](https://github.com/p1neappleXpress/OpenFluxDesktop).
-- `OpenFlux/` → [OpenFlux](https://github.com/p1neappleXpress/OpenFlux), the
+  [OpenFluxDesktop](https://github.com/typeoftypes/OpenFlux2Desktop).
+- `OpenFlux/` → [OpenFlux](https://github.com/typeoftypes/OpenFlux2), the
   core this app embeds as a library (gomobile).
 
 ## Building
@@ -65,7 +65,7 @@ scripts/      build-android-core.sh
   sessions with failover, AES-256-GCM encryption, the in-app check/captcha
   flow, the node-deployment wizard, and the Compose design system. Thank you!
 - **[p1neappleXpress](https://github.com/p1neappleXpress)** — author of the
-  [OpenFlux](https://github.com/p1neappleXpress/OpenFlux) core this app
+  [OpenFlux](https://github.com/typeoftypes/OpenFlux2) core this app
   embeds: the tunnel, transports, and negotiation protocol.
 - **[damnurmum](https://github.com/damnurmum)** — author of
   [OpenFlux-Android](https://github.com/damnurmum/OpenFlux-Android) and,

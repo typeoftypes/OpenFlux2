@@ -1,7 +1,7 @@
 # Fork information
 
 This repository is a modified fork of
-[p1neappleXpress/OpenFlux](https://github.com/p1neappleXpress/OpenFlux).
+[p1neappleXpress/OpenFlux](https://github.com/typeoftypes/OpenFlux2).
 It preserves the upstream Git history and remains licensed under GPL-3.0-or-later.
 
 ## Major changes in this fork

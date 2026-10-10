@@ -1,4 +1,4 @@
-module github.com/p1neappleXpress/OpenFlux
+module github.com/typeoftypes/OpenFlux2
 
 go 1.26.6
 

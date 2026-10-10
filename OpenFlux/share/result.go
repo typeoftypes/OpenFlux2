@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/typeoftypes/OpenFlux2/transport"
 )
 
 // Result is what every entry point answers about a link, as the same JSON

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/typeoftypes/OpenFlux2/transport"
 )
 
 // Client is a Mux over the direct-HTTP two-channel carrier - for a phpbox
