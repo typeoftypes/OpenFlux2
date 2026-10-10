@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport"
 )
 
 // Client is a Mux over the direct-HTTP two-channel carrier - for a phpbox
@@ -185,9 +185,8 @@ func (h *httpCarrier) upLoop() {
 		if len(buf) == 0 {
 			return
 		}
-		if h.browse != nil && h.stealth.BrowseMode {
-			time.Sleep(h.browse.NextDelay())
-		} else {
+		// Short jitter only — BrowseSession idle delays would stall the tunnel.
+		if h.stealth.EnableJitter {
 			time.Sleep(h.stealth.ApplyJitter())
 		}
 		body := buf

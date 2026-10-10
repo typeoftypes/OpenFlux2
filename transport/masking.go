@@ -122,27 +122,39 @@ func (bs *BrowseSession) NextKind() RequestKind {
 	}
 }
 
-// NextDelay is how long to wait before the next send, human-like.
+// NextDelay is how long to wait before the next send.
+// Tuned for a live tunnel: vary enough to avoid a fixed-rate signature, but
+// never multi-second sleeps (those made clients look "stuck" and timed out
+// handshakes). Longer "human reading" gaps are only for idle keepalives via
+// NextIdleDelay.
 func (bs *BrowseSession) NextDelay() time.Duration {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 	bs.advancePhaseLocked()
 	switch bs.phase {
 	case phasePageLoad:
-		// Parallel asset waterfall: 5–80ms between chunks.
-		return randomDurationLocked(bs.rng, 5*time.Millisecond, 80*time.Millisecond)
+		// Asset waterfall: 2–40ms.
+		return randomDurationLocked(bs.rng, 2*time.Millisecond, 40*time.Millisecond)
 	case phaseInteract:
-		// Click → API round-trips.
-		return randomDurationLocked(bs.rng, 30*time.Millisecond, 220*time.Millisecond)
+		// Click → API: 8–80ms.
+		return randomDurationLocked(bs.rng, 8*time.Millisecond, 80*time.Millisecond)
 	case phaseReading:
-		// Person reading / scrolling: 400ms–3.5s quiet.
-		return randomDurationLocked(bs.rng, 400*time.Millisecond, 3500*time.Millisecond)
+		// Still moving data (VPN/proxy): 5–50ms jitter, not seconds.
+		return randomDurationLocked(bs.rng, 5*time.Millisecond, 50*time.Millisecond)
 	case phaseIdle:
-		// Tab in background: sparse heartbeats.
-		return randomDurationLocked(bs.rng, 2*time.Second, 12*time.Second)
+		// Keepalive path: 15–120ms (not 2–12s).
+		return randomDurationLocked(bs.rng, 15*time.Millisecond, 120*time.Millisecond)
 	default:
-		return 100 * time.Millisecond
+		return 15 * time.Millisecond
 	}
+}
+
+// NextIdleDelay is a longer gap only for optional background probes, not the
+// data path. Callers that put this on every Send will stall the tunnel.
+func (bs *BrowseSession) NextIdleDelay() time.Duration {
+	bs.mu.Lock()
+	defer bs.mu.Unlock()
+	return randomDurationLocked(bs.rng, 400*time.Millisecond, 2*time.Second)
 }
 
 // TargetPayloadSize suggests a body size distribution like HTML/JSON/images

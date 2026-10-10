@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/typeoftypes/OpenFlux2/utils"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // EnhancedHTTPTransport wraps HTTP transports with stability and masking
@@ -82,18 +82,25 @@ func (eht *EnhancedHTTPTransport) PrepareRequest(req *http.Request) error {
 		}
 	}
 
-	// Human-like inter-request gap (browse phases) or classic jitter.
-	if eht.stealthConfig.BrowseMode && eht.browse != nil {
-		delay := eht.browse.NextDelay()
-		if eht.stealthConfig.EnableJitter {
-			delay += eht.stealthConfig.ApplyJitter() / 4
+	// Light inter-request jitter only. Multi-second "reading" sleeps were
+	// applied here and blocked handshakes / made the client look offline.
+	if eht.stealthConfig.EnableJitter {
+		delay := eht.stealthConfig.ApplyJitter()
+		if eht.stealthConfig.BrowseMode && eht.browse != nil {
+			// NextDelay is tunnel-safe (≤120ms); use the smaller of the two.
+			bd := eht.browse.NextDelay()
+			if bd < delay {
+				delay = bd
+			}
 		}
 		time.Sleep(delay)
-	} else if eht.stealthConfig.EnableJitter {
-		time.Sleep(eht.stealthConfig.ApplyJitter())
-		if shouldThrottle, delay := eht.stealthConfig.ShouldThrottle(eht.requestCount); shouldThrottle {
-			utils.Debugf("[HTTP_ENHANCED] throttling for %v", delay)
-			time.Sleep(delay)
+		if shouldThrottle, d := eht.stealthConfig.ShouldThrottle(eht.requestCount); shouldThrottle {
+			// Cap throttle so a burst pause cannot exceed 150ms.
+			if d > 150*time.Millisecond {
+				d = 150 * time.Millisecond
+			}
+			utils.Debugf("[HTTP_ENHANCED] throttling for %v", d)
+			time.Sleep(d)
 		}
 		elapsed := time.Since(eht.lastRequestTime)
 		minDelay := eht.stealthConfig.GetInterPacketDelay()

@@ -34,14 +34,14 @@ func DefaultStealthConfig() StealthConfig {
 		EnableJitter:     true,
 		EnablePadding:    true,
 		EnableShaping:    true,
-		MinJitter:        8 * time.Millisecond,
-		MaxJitter:        120 * time.Millisecond,
-		MinPadding:       16,
-		MaxPadding:       512,
+		MinJitter:        2 * time.Millisecond,
+		MaxJitter:        35 * time.Millisecond,
+		MinPadding:       8,
+		MaxPadding:       256,
 		PadToBuckets:     true,
-		InterPacketDelay: 40 * time.Millisecond,
-		BurstSize:        7, // small "asset waterfall" then pause
-		BurstInterval:    600 * time.Millisecond,
+		InterPacketDelay: 12 * time.Millisecond,
+		BurstSize:        12,
+		BurstInterval:    80 * time.Millisecond, // short pause, not 600ms
 		BrowseMode:       true,
 	}
 }
