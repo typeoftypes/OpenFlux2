@@ -189,7 +189,7 @@ struct ContentView: View {
     private func startVPN(_ p: Profile) {
         // Relay extension logs into the same panel as the in-app SOCKS core.
         vpn.logSink = { [weak tunnel] line in tunnel?.appendExternal(line) }
-        tunnel.appendLog("[app] starting system VPN…")
+        tunnel.appendExternal("[app] starting system VPN…")
         vpn.start(transport: p.transport, url: p.url,
                   maxToken: p.maxToken, maxUid: p.maxUid,
                   dns: dnsSpec, tunnelUDP: tunnelUDP,
