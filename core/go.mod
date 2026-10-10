@@ -1,4 +1,4 @@
-module github.com/typeoftypes/OpenFlux2
+module github.com/typeoftypes/OpenFlux2-core
 
 go 1.26.4
 
