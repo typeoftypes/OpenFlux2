@@ -255,5 +255,5 @@ func randomSessionID() string {
 
 func browserUA() string {
 	// Fixed modern Chrome UA — consistent fingerprint for the session.
-	return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+	return "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0"
 }

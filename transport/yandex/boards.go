@@ -27,8 +27,7 @@ import (
 
 const (
 	boardsBase = "boards.yandex.ru"
-	boardsUA   = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 " +
-		"(KHTML, like Gecko) Chrome/153.0.0.0 Mobile Safari/537.36"
+	boardsUA   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0"
 	boardsSocketHostDefault = "socket33.boards.yandex.ru"
 
 	// Heartbeat. Сервер шлёт engine.io ping "2" (pingInterval=25000,

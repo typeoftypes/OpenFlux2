@@ -211,106 +211,21 @@ func (bs *BrowseSession) advancePhaseLocked() {
 	}
 }
 
-// GetRandomBrowserProfile returns a random realistic browser profile (2025–2026).
+// GetRandomBrowserProfile returns a realistic browser profile (Firefox 155).
 func GetRandomBrowserProfile() BrowserProfile {
-	profiles := []BrowserProfile{
-		// Chrome 140 Windows 11
-		{
-			UserAgent:               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-			AcceptLanguage:          "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-			Accept:                  "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-			AcceptEncoding:          "gzip, deflate, br, zstd",
-			SecChUa:                 `"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"`,
-			SecChUaMobile:           "?0",
-			SecChUaPlatform:         `"Windows"`,
-			SecChUaFullVersionList:  `"Chromium";v="140.0.7339.128", "Not=A?Brand";v="10.0.0.0", "Google Chrome";v="140.0.7339.128"`,
-			SecChViewportWidth:      "1920",
-			SecFetchDest:            "document",
-			SecFetchMode:            "navigate",
-			SecFetchSite:            "none",
-			DNT:                     "1",
-			UpgradeInsecureRequests: "1",
-		},
-		// Chrome 140 macOS
-		{
-			UserAgent:               "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-			AcceptLanguage:          "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-			Accept:                  "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-			AcceptEncoding:          "gzip, deflate, br, zstd",
-			SecChUa:                 `"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"`,
-			SecChUaMobile:           "?0",
-			SecChUaPlatform:         `"macOS"`,
-			SecChUaFullVersionList:  `"Chromium";v="140.0.7339.128", "Google Chrome";v="140.0.7339.128"`,
-			SecChViewportWidth:      "1440",
-			SecFetchDest:            "document",
-			SecFetchMode:            "navigate",
-			SecFetchSite:            "none",
-			DNT:                     "1",
-			UpgradeInsecureRequests: "1",
-		},
-		// Chrome 140 Android
-		{
-			UserAgent:               "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
-			AcceptLanguage:          "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-			Accept:                  "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-			AcceptEncoding:          "gzip, deflate, br, zstd",
-			SecChUa:                 `"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"`,
-			SecChUaMobile:           "?1",
-			SecChUaPlatform:         `"Android"`,
-			SecChViewportWidth:      "412",
-			SecFetchDest:            "document",
-			SecFetchMode:            "navigate",
-			SecFetchSite:            "none",
-			DNT:                     "1",
-			UpgradeInsecureRequests: "1",
-		},
-		// Edge 140 Windows
-		{
-			UserAgent:               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0",
-			AcceptLanguage:          "ru,en;q=0.9",
-			Accept:                  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-			AcceptEncoding:          "gzip, deflate, br, zstd",
-			SecChUa:                 `"Microsoft Edge";v="140", "Chromium";v="140", "Not=A?Brand";v="24"`,
-			SecChUaMobile:           "?0",
-			SecChUaPlatform:         `"Windows"`,
-			SecChViewportWidth:      "1536",
-			SecFetchDest:            "document",
-			SecFetchMode:            "navigate",
-			SecFetchSite:            "none",
-			DNT:                     "1",
-			UpgradeInsecureRequests: "1",
-		},
-		// Firefox 143 Windows
-		{
-			UserAgent:               "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:143.0) Gecko/20100101 Firefox/143.0",
-			AcceptLanguage:          "ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3",
-			Accept:                  "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-			AcceptEncoding:          "gzip, deflate, br, zstd",
-			SecFetchDest:            "document",
-			SecFetchMode:            "navigate",
-			SecFetchSite:            "none",
-			DNT:                     "1",
-			UpgradeInsecureRequests: "1",
-		},
-		// Safari 18 iOS
-		{
-			UserAgent:               "Mozilla/5.0 (iPhone; CPU iPhone OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1",
-			AcceptLanguage:          "ru-RU,ru;q=0.9",
-			Accept:                  "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-			AcceptEncoding:          "gzip, deflate, br",
-			SecFetchDest:            "document",
-			SecFetchMode:            "navigate",
-			SecFetchSite:            "none",
-			DNT:                     "1",
-			UpgradeInsecureRequests: "1",
-		},
+	return BrowserProfile{
+		UserAgent:               "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0",
+		AcceptLanguage:          "ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3",
+		Accept:                  "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+		AcceptEncoding:          "gzip, deflate, br, zstd",
+		SecFetchDest:            "document",
+		SecFetchMode:            "navigate",
+		SecFetchSite:            "none",
+		DNT:                     "1",
+		UpgradeInsecureRequests: "1",
 	}
-	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(profiles))))
-	if err != nil {
-		return profiles[0]
-	}
-	return profiles[n.Int64()]
 }
+
 
 // ApplyBrowserHeaders sets navigation-style headers (first page open).
 func ApplyBrowserHeaders(req *http.Request, profile BrowserProfile) {
