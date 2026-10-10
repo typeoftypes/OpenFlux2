@@ -247,8 +247,7 @@ func newRawTransport(typ, url string, params map[string]interface{}, config tran
 	}
 	// Lower-memory devices get lighter stealth (smaller padding, fewer bursts).
 	if lowMemory.Load() {
-		config.StealthConfig.MaxPaddingBytes = 64
-		config.StealthConfig.BurstSize = 3
+		config.StealthConfig = transport.LowMemoryStealthConfig()
 	}
 
 	switch typ {

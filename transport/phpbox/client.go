@@ -79,6 +79,7 @@ type httpCarrier struct {
 	http                     *http.Client
 	profile                  transport.BrowserProfile
 	stealth                  transport.StealthConfig
+	browse                   *transport.BrowseSession
 
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -100,6 +101,7 @@ func newHTTPCarrier(endpoint, token, session string) *httpCarrier {
 		session:  session,
 		profile:  profile,
 		stealth:  cfg.StealthConfig,
+		browse:   transport.NewBrowseSession(),
 		http: &http.Client{
 			Timeout: 0, // the down-poll is long-lived
 			Transport: &http.Transport{
@@ -154,7 +156,14 @@ func originOf(endpoint string) string {
 // maskRequest applies a browser fingerprint so the request looks like a
 // same-origin XHR/fetch from a tab that opened the host, not a dedicated client.
 func (h *httpCarrier) maskRequest(req *http.Request) {
-	transport.ApplyBrowserHeaders(req, h.profile)
+	kind := transport.KindXHR
+	if h.browse != nil {
+		kind = h.browse.NextKind()
+		if kind == transport.KindNavigate {
+			kind = transport.KindXHR // long-poll/API is never a top-level navigation
+		}
+	}
+	transport.ApplyKindHeaders(req, h.profile, kind)
 	if origin := originOf(h.endpoint); origin != "" {
 		req.Header.Set("Origin", origin)
 		req.Header.Set("Referer", origin+"/")
@@ -176,7 +185,11 @@ func (h *httpCarrier) upLoop() {
 		if len(buf) == 0 {
 			return
 		}
-		time.Sleep(h.stealth.ApplyJitter())
+		if h.browse != nil && h.stealth.BrowseMode {
+			time.Sleep(h.browse.NextDelay())
+		} else {
+			time.Sleep(h.stealth.ApplyJitter())
+		}
 		body := buf
 		buf = buf[:0]
 		req, err := http.NewRequestWithContext(h.ctx, http.MethodPost, h.url("up"), bytes.NewReader(body))

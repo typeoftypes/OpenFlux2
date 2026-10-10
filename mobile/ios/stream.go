@@ -17,7 +17,7 @@ import (
 // OpenFluxStartStreamClient starts the SOCKS5 client on socksAddr in the
 // phpbox stream mode: the exit is a PHP node on an ordinary web host, reached
 // over a cups.online room (transportType "cupsonline", url the room's address)
-// , a Mail.ru document ("mailru"), or direct HTTP to phpbox.php ("phpbox", url|token). TCP only (ports 80 and
+// or a Mail.ru document ("mailru", its public link). TCP only (ports 80 and
 // 443 at the exit); no key, no session. Returns a start code; the rest of the
 // client (OpenFluxStop, OpenFluxIsConnected, OpenFluxStatsJSON) is shared.
 //

@@ -42,7 +42,9 @@ func DecodeCookies(b []byte) (*CookiesPayload, error) {
 type AuthRequiredPayload struct {
 	Transport string `json:"transport"`
 	URL       string `json:"url"`
-	Reason    string `json:"reason"`
+	// HTML is a script transport's own setup/login page; "" for native transports.
+	HTML   string `json:"html,omitempty"`
+	Reason string `json:"reason"`
 	// Doc: see CookiesPayload.Doc.
 	Doc string `json:"doc,omitempty"`
 }

@@ -190,10 +190,16 @@ final class TunnelController: ObservableObject {
     /// Проверка, которую надо пройти в интересах УЗЛА: не отключая туннель,
     /// чтобы куки были выданы на его адрес.
     @Published var remoteCaptchaURL: String?
+    /// Script transport's own HTML page (shown instead of URL when set).
+    @Published var captchaHTML: String?
+    /// Pending page is the script's own — no cookie harvest.
+    @Published var captchaOwn: Bool = false
 
     private func pollCaptcha() {
         guard running else {
             if captchaURL != nil { captchaURL = nil }
+            if captchaHTML != nil { captchaHTML = nil }
+            captchaOwn = false
             return
         }
         if let c = OpenFluxCaptchaPending() {
@@ -202,6 +208,13 @@ final class TunnelController: ObservableObject {
             let next = s.isEmpty ? nil : s
             if next != captchaURL { captchaURL = next }
         }
+        if let c = OpenFluxCaptchaHTML() {
+            let s = String(cString: c)
+            OpenFluxFreeString(c)
+            let next = s.isEmpty ? nil : s
+            if next != captchaHTML { captchaHTML = next }
+        }
+        captchaOwn = OpenFluxCaptchaOwn() != 0
         if let c = OpenFluxRemoteCaptchaPending() {
             let s = String(cString: c)
             OpenFluxFreeString(c)
@@ -221,11 +234,34 @@ final class TunnelController: ObservableObject {
 
     /// Hands cookies solved in the WebView to the in-app core.
     func applyCaptchaCookies(_ header: String) {
+        header.withCString {
+            OpenFluxSetInitialCookies(UnsafeMutablePointer(mutating: $0))
+        }
         let n = header.withCString {
             OpenFluxApplyCaptchaCookies(UnsafeMutablePointer(mutating: $0))
         }
         appendLog("[app] captcha cookies handed to \(n) transport(s)")
         captchaURL = nil
+        captchaHTML = nil
+        captchaOwn = false
+    }
+
+    /// JSON from a script transport's own page (window.openfluxSubmit).
+    func submitCaptchaData(_ json: String) {
+        let err = json.withCString { c -> String in
+            guard let p = OpenFluxSubmitCaptchaData(UnsafeMutablePointer(mutating: c)) else { return "" }
+            let s = String(cString: p)
+            OpenFluxFreeString(p)
+            return s
+        }
+        if err.isEmpty {
+            appendLog("[app] captcha data accepted")
+            captchaURL = nil
+            captchaHTML = nil
+            captchaOwn = false
+        } else {
+            appendLog("[app] captcha data error: \(err)")
+        }
     }
 
     /// Connectivity check WITHOUT the local proxy — used when the system VPN is

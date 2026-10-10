@@ -5,63 +5,6 @@ All notable changes to OpenFluxAndroid. Format loosely follows
 
 ## [Unreleased]
 
-## [2.3.2] - 2026-10-07
-
-Hotfix: the core 0.4.2.
-
-### Fixed
-
-- **Mail.ru Docs: a link that only lets the document be read no longer drops the connection every few
-  seconds.** The transport sent the editor's `saveChanges` now and then, and for a link without edit rights
-  (what most public links are) the server closed the connection on every one, so the channel was up for
-  moments between reconnects. It is not sent there any more (core 0.4.2, `OpenFlux` bumped to
-  [`74cac6d`](https://github.com/p1neappleXpress/OpenFlux/commit/74cac6d)). The Engine.IO / Socket.IO
-  handshake is also completed before the auth is sent (thanks to Novarg93,
-  [OpenFlux#147](https://github.com/p1neappleXpress/OpenFlux/pull/147)). Exit nodes on a VDS need the same
-  core: «Своя нода» installs `node-v1.2.2`.
-
-## [2.3.1] - 2026-10-07
-
-Hotfix: the core 0.4.1.
-
-### Fixed
-
-- **Yandex Docs / Boards / Volga through a node: the check no longer repeats forever.** The check the
-  node asks for is passed in the app's browser from the node's IPv4 address (through the tunnel), but
-  the node's own requests went out over IPv6 on hosts that have an IPv6 route, so Yandex never accepted
-  the cookies the app handed over. The core now dials Yandex IPv4 first (core 0.4.1, `OpenFlux` bumped to
-  [`d0578b6`](https://github.com/p1neappleXpress/OpenFlux/commit/d0578b6)). Exit nodes on a VDS need the
-  same core: «Своя нода» installs `node-v1.2.1`.
-- **Exit node, L3: the log (`-d`) shows the tunnel's packets only**, not every packet the host receives.
-
-## [2.3.0] - 2026-10-07
-
-### Added
-
-- **«Экспериментальные функции»** (Settings): the JS-transport features below are off by default and
-  for settings saved before; nothing of them is shown, started or fetched, and the JS engine is not
-  started when the app starts, until the switch is on.
-- **JS transports** (experimental, off by default): the «Транспорты» tab, installing a signed
-  transport by link, file or catalog with a trust dialog and the author's key fingerprint, the
-  settings a transport declares (a wizard page), its own setup and login pages in a WebView, update
-  check with changelog, apply and roll back, and the transports shipped in the app (installed, or
-  replaced by a newer shipped version, the first time the switch is turned on). A profile that uses
-  a JS transport does not connect while the switch is off, and says so.
-- A second release channel: nightly test builds next to the main releases. A
-  nightly is a GitHub prerelease tagged `nightly-<date>-<commit>`, built by the
-  new `Nightly` workflow from the `nightly` branch (on a push to it, and every
-  night when it has a commit without a build), signed with the same key as a
-  main release so it installs over one; the newest 7 are kept. Settings → About
-  has a «Ночные сборки» switch: with it on, «Проверить обновления» also looks
-  at nightlies; the main channel never sees them.
-
-### Changed
-
-- Bumps `OpenFlux` to the core 0.4.0 ([`a415c09`](https://github.com/p1neappleXpress/OpenFlux/commit/a415c09d1d1006a201b5e9523d2f30d7ee2b4149)) and `shared` to
-  [`a7fca72`](https://github.com/p1neappleXpress/OpenFluxClientShared/commit/a7fca72).
-- The core's Yandex check on a profile without a key now reaches the app (a profile without a Session
-  used to log "external solver required" and never ask for the check).
-
 ## [2.2.0] - 2026-10-01
 
 ### Fixed
@@ -74,12 +17,9 @@ Hotfix: the core 0.4.1.
   (no FTP), takes a key of your own on an FTP install, opens the node's panel in
   the browser, and shows which generation serves («работает · поколение N»).
   Bumps `OpenFlux` to
-  [`bb55dc3`](https://github.com/p1neappleXpress/OpenFlux/commit/bb55dc3) and
+  [`d245db7`](https://github.com/p1neappleXpress/OpenFlux/commit/d245db7) and
   `shared` to
   [`98572e2`](https://github.com/p1neappleXpress/OpenFluxClientShared/commit/98572e2).
-- The core's Yandex Boards moves packets as `modify-objects` text objects (the
-  board no longer relays `notify-position`), and Yandex Docs and Mail.ru Docs
-  send the web client's `saveChanges` stream built from the live session.
 
 ### Added
 

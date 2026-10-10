@@ -7,193 +7,186 @@ import (
 	"time"
 )
 
-// StealthConfig contains advanced stealth and masking parameters
+// StealthConfig contains advanced stealth and masking parameters aimed at
+// making carrier traffic resemble a person using a website (page loads,
+// XHR, idle reading) rather than a constant-bitrate tunnel.
 type StealthConfig struct {
-	// Timing randomization to avoid traffic analysis
-	JitterMin        time.Duration
-	JitterMax        time.Duration
 	EnableJitter     bool
-	
-	// Packet size padding to hide actual payload sizes
 	EnablePadding    bool
-	MinPaddingBytes  int
-	MaxPaddingBytes  int
-	
-	// Traffic shaping to mimic normal browsing patterns
 	EnableShaping    bool
+	MinJitter        time.Duration
+	MaxJitter        time.Duration
+	MinPadding       int
+	MaxPadding       int
+	// PadToBuckets aligns sizes to common web-resource sizes (HTML/JSON/img).
+	PadToBuckets     bool
+	InterPacketDelay time.Duration
 	BurstSize        int
 	BurstInterval    time.Duration
-	
-	// Randomize packet intervals
-	InterPacketDelay time.Duration
-	RandomizeDelay   bool
-	
-	// Connection fingerprint randomization
-	RandomizeFingerprint bool
+	// BrowseMode enables human-like phase delays (preferred over fixed InterPacketDelay).
+	BrowseMode bool
 }
 
-// DefaultStealthConfig returns production stealth settings
+// DefaultStealthConfig returns production stealth settings tuned for
+// "looks like browsing", not max throughput.
 func DefaultStealthConfig() StealthConfig {
 	return StealthConfig{
-		JitterMin:            5 * time.Millisecond,
-		JitterMax:            50 * time.Millisecond,
-		EnableJitter:         true,
-		EnablePadding:        true,
-		MinPaddingBytes:      8,
-		MaxPaddingBytes:      256,
-		EnableShaping:        true,
-		BurstSize:            5,
-		BurstInterval:        200 * time.Millisecond,
-		InterPacketDelay:     10 * time.Millisecond,
-		RandomizeDelay:       true,
-		RandomizeFingerprint: true,
+		EnableJitter:     true,
+		EnablePadding:    true,
+		EnableShaping:    true,
+		MinJitter:        8 * time.Millisecond,
+		MaxJitter:        120 * time.Millisecond,
+		MinPadding:       16,
+		MaxPadding:       512,
+		PadToBuckets:     true,
+		InterPacketDelay: 40 * time.Millisecond,
+		BurstSize:        7, // small "asset waterfall" then pause
+		BurstInterval:    600 * time.Millisecond,
+		BrowseMode:       true,
 	}
 }
 
-// ApplyJitter adds random timing jitter to avoid pattern detection
+// LowMemoryStealthConfig is tighter for phones (less padding, shorter pauses).
+func LowMemoryStealthConfig() StealthConfig {
+	sc := DefaultStealthConfig()
+	sc.MaxPadding = 128
+	sc.MaxJitter = 60 * time.Millisecond
+	sc.BurstInterval = 350 * time.Millisecond
+	return sc
+}
+
+// ApplyJitter returns a random sleep in [MinJitter, MaxJitter].
 func (sc *StealthConfig) ApplyJitter() time.Duration {
 	if !sc.EnableJitter {
 		return 0
 	}
-	
-	minNs := sc.JitterMin.Nanoseconds()
-	maxNs := sc.JitterMax.Nanoseconds()
-	if maxNs <= minNs {
-		return sc.JitterMin
+	min := sc.MinJitter
+	max := sc.MaxJitter
+	if max <= min {
+		return min
 	}
-	
-	diff := maxNs - minNs
-	n, err := rand.Int(rand.Reader, big.NewInt(diff))
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(max-min)))
 	if err != nil {
-		return sc.JitterMin
+		return min
 	}
-	
-	return time.Duration(minNs + n.Int64())
+	return min + time.Duration(n.Int64())
 }
 
-// CalculatePadding returns random padding size to obscure actual packet size
+// webSizeBuckets are typical uncompressed body sizes for web traffic so
+// packet length histograms do not show a flat tunnel MTU.
+var webSizeBuckets = []int{
+	128, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096,
+	6144, 8192, 12288, 16384,
+}
+
+// CalculatePadding returns how many padding bytes to append.
 func (sc *StealthConfig) CalculatePadding(actualSize int) int {
 	if !sc.EnablePadding {
 		return 0
 	}
-	
-	diff := sc.MaxPaddingBytes - sc.MinPaddingBytes
-	if diff <= 0 {
-		return sc.MinPaddingBytes
+	if sc.PadToBuckets {
+		for _, b := range webSizeBuckets {
+			if b > actualSize {
+				pad := b - actualSize
+				if pad > sc.MaxPadding {
+					return sc.MaxPadding
+				}
+				if pad < sc.MinPadding && b != webSizeBuckets[0] {
+					continue
+				}
+				return pad
+			}
+		}
 	}
-	
-	n, err := rand.Int(rand.Reader, big.NewInt(int64(diff)))
+	span := sc.MaxPadding - sc.MinPadding
+	if span <= 0 {
+		return sc.MinPadding
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(span+1)))
 	if err != nil {
-		return sc.MinPaddingBytes
+		return sc.MinPadding
 	}
-	
-	return sc.MinPaddingBytes + int(n.Int64())
+	return sc.MinPadding + int(n.Int64())
 }
 
-// GetInterPacketDelay returns randomized delay between packets
+// GetInterPacketDelay returns a delay between sends (±50% around InterPacketDelay).
 func (sc *StealthConfig) GetInterPacketDelay() time.Duration {
-	if !sc.RandomizeDelay {
+	if sc.InterPacketDelay <= 0 {
+		return sc.ApplyJitter()
+	}
+	baseNs := sc.InterPacketDelay.Nanoseconds()
+	variation := baseNs / 2
+	if variation <= 0 {
 		return sc.InterPacketDelay
 	}
-	
-	baseNs := sc.InterPacketDelay.Nanoseconds()
-	variation := baseNs / 2 // ±50% variation
-	
 	n, err := rand.Int(rand.Reader, big.NewInt(variation*2))
 	if err != nil {
 		return sc.InterPacketDelay
 	}
-	
 	jitter := n.Int64() - variation
 	return time.Duration(baseNs + jitter)
 }
 
-// ShouldThrottle determines if traffic shaping should apply
+// ShouldThrottle returns true after every BurstSize packets (page-load style pause).
 func (sc *StealthConfig) ShouldThrottle(packetsSent int) (bool, time.Duration) {
-	if !sc.EnableShaping {
+	if !sc.EnableShaping || sc.BurstSize <= 0 {
 		return false, 0
 	}
-	
 	if packetsSent > 0 && packetsSent%sc.BurstSize == 0 {
 		return true, sc.BurstInterval + sc.ApplyJitter()
 	}
-	
 	return false, 0
 }
 
-// AddPadding adds random padding to data to obscure size patterns
+// AddPadding adds random padding to data to obscure size patterns.
+// Layout: 2-byte big-endian original length + data + random pad.
 func (sc *StealthConfig) AddPadding(data []byte) []byte {
 	if !sc.EnablePadding {
 		return data
 	}
-	
 	paddingSize := sc.CalculatePadding(len(data))
 	if paddingSize == 0 {
 		return data
 	}
-	
-	// Create padded buffer with length prefix
 	padded := make([]byte, len(data)+paddingSize+2)
-	
-	// Store original length (big-endian)
 	padded[0] = byte(len(data) >> 8)
 	padded[1] = byte(len(data))
-	
-	// Copy actual data
 	copy(padded[2:], data)
-	
-	// Fill padding with random bytes
 	if paddingSize > 0 {
-		padding := make([]byte, paddingSize)
-		rand.Read(padding)
-		copy(padded[2+len(data):], padding)
+		_, _ = rand.Read(padded[2+len(data):])
 	}
-	
 	return padded
 }
 
-// RemovePadding extracts original data from padded packet
+// RemovePadding extracts original data from a padded packet.
 func (sc *StealthConfig) RemovePadding(padded []byte) ([]byte, error) {
 	if !sc.EnablePadding || len(padded) < 2 {
 		return padded, nil
 	}
-	
-	// Extract original length
 	origLen := int(padded[0])<<8 | int(padded[1])
-	
 	if origLen+2 > len(padded) {
-		// Not a padded packet, return as-is
 		return padded, nil
 	}
-	
 	return padded[2 : 2+origLen], nil
 }
 
-// RandomBackoff calculates exponential backoff with jitter
+// RandomBackoff calculates exponential backoff with jitter.
 func RandomBackoff(attempt int, min, max time.Duration, multiplier float64) time.Duration {
 	if attempt < 0 {
 		attempt = 0
 	}
-	
-	// Calculate exponential delay: min * multiplier^attempt
 	delay := float64(min) * math.Pow(multiplier, float64(attempt))
-	
-	// Cap at max
 	if delay > float64(max) {
 		delay = float64(max)
 	}
-	
-	// Add ±25% random jitter
 	jitter := delay * 0.25
-	n, err := rand.Int(rand.Reader, big.NewInt(int64(jitter*2)))
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(jitter*2)+1))
 	if err != nil {
 		return time.Duration(delay)
 	}
-	
 	finalDelay := delay + float64(n.Int64()) - jitter
 	if finalDelay < float64(min) {
 		finalDelay = float64(min)
 	}
-	
 	return time.Duration(finalDelay)
 }

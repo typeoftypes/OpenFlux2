@@ -41,7 +41,9 @@ type CookiesRequestPayload struct {
 	RequestID string `json:"request_id,omitempty"`
 	Transport string `json:"transport"`
 	URL       string `json:"url"`
-	Reason    string `json:"reason"`
+	// HTML is a script transport's own page (shown instead of URL when set).
+	HTML   string `json:"html,omitempty"`
+	Reason string `json:"reason"`
 	// Remote marks a check the exit node needs: it must be passed from the
 	// exit's address, and the answering offer must set Remote too.
 	Remote bool `json:"remote,omitempty"`

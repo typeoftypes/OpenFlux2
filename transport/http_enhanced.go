@@ -10,27 +10,29 @@ import (
 )
 
 // EnhancedHTTPTransport wraps HTTP transports with stability and masking
+// so requests look like a person using a website (browse phases + headers).
 type EnhancedHTTPTransport struct {
 	mu sync.RWMutex
-	
-	// Browser profile for masking
+
+	// Browser profile for masking (fixed for the "tab" lifetime)
 	profile BrowserProfile
-	
+	browse  *BrowseSession
+
 	// Stability components
 	circuitBreaker  *CircuitBreaker
 	healthMonitor   *HealthMonitor
 	adaptiveTimeout *AdaptiveTimeout
-	
+
 	// Stealth features
 	stealthConfig StealthConfig
-	
+
 	// Request counter for throttling
 	requestCount    int
 	lastRequestTime time.Time
-	
+
 	// Connection statistics
-	successCount    int
-	failureCount    int
+	successCount int
+	failureCount int
 }
 
 // NewEnhancedHTTPTransport creates an enhanced HTTP transport wrapper
@@ -40,8 +42,14 @@ func NewEnhancedHTTPTransport(config TransportConfig) *EnhancedHTTPTransport {
 		profile = *config.BrowserProfile
 	}
 	
+	bs := NewBrowseSession()
+	// Keep profile consistent with the browse session fingerprint.
+	if config.BrowserProfile == nil {
+		profile = bs.Profile()
+	}
 	return &EnhancedHTTPTransport{
 		profile:         profile,
+		browse:          bs,
 		circuitBreaker:  NewCircuitBreaker(config.ResilienceConfig),
 		healthMonitor:   NewHealthMonitor(config.ResilienceConfig),
 		adaptiveTimeout: NewAdaptiveTimeout(config.ResilienceConfig),
@@ -50,49 +58,52 @@ func NewEnhancedHTTPTransport(config TransportConfig) *EnhancedHTTPTransport {
 	}
 }
 
-// PrepareRequest applies masking and stability features to HTTP request
+// PrepareRequest applies masking and stability features to HTTP request.
+// Timing and Sec-Fetch-* headers follow a BrowseSession so the stream looks
+// like page load → reading → click XHR, not a fixed-rate tunnel.
 func (eht *EnhancedHTTPTransport) PrepareRequest(req *http.Request) error {
 	eht.mu.Lock()
 	defer eht.mu.Unlock()
-	
-	// Check circuit breaker
+
 	if !eht.circuitBreaker.CanAttempt() {
 		return fmt.Errorf("circuit breaker open")
 	}
-	
-	// Apply browser masking headers
-	ApplyBrowserHeaders(req, eht.profile)
-	
-	// Add realistic referer
+
+	kind := KindXHR
+	if eht.browse != nil {
+		kind = eht.browse.NextKind()
+	}
+	ApplyKindHeaders(req, eht.profile, kind)
+
 	if req.Header.Get("Referer") == "" {
 		referer := GetRealisticReferer(req.URL.String())
 		if referer != "" {
 			req.Header.Set("Referer", referer)
 		}
 	}
-	
-	// Apply timing jitter to avoid patterns
-	if eht.stealthConfig.EnableJitter {
-		jitter := eht.stealthConfig.ApplyJitter()
-		time.Sleep(jitter)
-	}
-	
-	// Traffic shaping
-	if shouldThrottle, delay := eht.stealthConfig.ShouldThrottle(eht.requestCount); shouldThrottle {
-		utils.Debugf("[HTTP_ENHANCED] throttling for %v", delay)
+
+	// Human-like inter-request gap (browse phases) or classic jitter.
+	if eht.stealthConfig.BrowseMode && eht.browse != nil {
+		delay := eht.browse.NextDelay()
+		if eht.stealthConfig.EnableJitter {
+			delay += eht.stealthConfig.ApplyJitter() / 4
+		}
 		time.Sleep(delay)
+	} else if eht.stealthConfig.EnableJitter {
+		time.Sleep(eht.stealthConfig.ApplyJitter())
+		if shouldThrottle, delay := eht.stealthConfig.ShouldThrottle(eht.requestCount); shouldThrottle {
+			utils.Debugf("[HTTP_ENHANCED] throttling for %v", delay)
+			time.Sleep(delay)
+		}
+		elapsed := time.Since(eht.lastRequestTime)
+		minDelay := eht.stealthConfig.GetInterPacketDelay()
+		if elapsed < minDelay {
+			time.Sleep(minDelay - elapsed)
+		}
 	}
-	
-	// Rate limiting between requests
-	elapsed := time.Since(eht.lastRequestTime)
-	minDelay := eht.stealthConfig.GetInterPacketDelay()
-	if elapsed < minDelay {
-		time.Sleep(minDelay - elapsed)
-	}
-	
+
 	eht.requestCount++
 	eht.lastRequestTime = time.Now()
-	
 	return nil
 }
 
