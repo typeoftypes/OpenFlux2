@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/p1neappleXpress/OpenFlux/transport"
-	"github.com/p1neappleXpress/OpenFlux/utils"
+	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
 // lockedBuffer is a log sink the transport's goroutines can write to while the test reads it.
