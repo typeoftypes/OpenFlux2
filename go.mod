@@ -19,6 +19,7 @@ require (
 	github.com/jlaffaye/ftp v0.2.4
 	github.com/klauspost/compress v1.20.0
 	github.com/pierrec/lz4/v4 v4.1.27
+	github.com/pion/webrtc/v3 v3.3.6
 	github.com/pion/webrtc/v4 v4.2.22
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/xjasonlyu/windivert-go v0.0.0-20201010013527-4239d0afa76f
@@ -54,7 +55,6 @@ require (
 	github.com/pion/transport/v5 v5.1.1 // indirect
 	github.com/pion/turn/v2 v2.1.6 // indirect
 	github.com/pion/turn/v5 v5.1.2 // indirect
-	github.com/pion/webrtc/v3 v3.3.6 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
