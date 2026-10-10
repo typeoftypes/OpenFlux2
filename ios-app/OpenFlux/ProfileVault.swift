@@ -115,7 +115,7 @@ enum ProfileVault {
     }
 
     private static func loadKeyFromKeychain() -> Data? {
-        var q: [String: Any] = [
+        let q: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,

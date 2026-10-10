@@ -709,15 +709,18 @@ struct NoServerWizardView: View {
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Always emit ToolbarItems (iOS 15): conditional ToolbarItem via `if`
+                // requires iOS 16+ (ViewBuilder buildIf).
                 ToolbarItem(placement: .cancellationAction) {
                     Button(model.step == .done && model.saved ? "Готово" : "Закрыть") {
                         if model.unsaved { confirmClose = true } else { close() }
                     }
                 }
-                if model.step == .channel || (model.step == .install && model.installedToken == nil) {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("Назад") { model.back() }.disabled(model.busy != nil)
-                    }
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Назад") { model.back() }
+                        .disabled(model.busy != nil || !wizardShowBack)
+                        .opacity(wizardShowBack ? 1 : 0)
+                        .accessibilityHidden(!wizardShowBack)
                 }
             }
             .alert("Нода на хостинге, но профиль не сохранён", isPresented: $confirmClose) {
