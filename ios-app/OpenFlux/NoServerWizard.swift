@@ -718,9 +718,8 @@ struct NoServerWizardView: View {
                 }
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Назад") { model.back() }
-                        .disabled(model.busy != nil || !wizardShowBack)
-                        .opacity(wizardShowBack ? 1 : 0)
-                        .accessibilityHidden(!wizardShowBack)
+                        .disabled(model.busy != nil || !(model.step == .channel || (model.step == .install && model.installedToken == nil)))
+                        .opacity((model.step == .channel || (model.step == .install && model.installedToken == nil)) ? 1 : 0)
                 }
             }
             .alert("Нода на хостинге, но профиль не сохранён", isPresented: $confirmClose) {
