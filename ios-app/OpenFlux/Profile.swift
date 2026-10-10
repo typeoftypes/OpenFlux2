@@ -24,6 +24,16 @@ struct Profile: Identifiable, Codable, Equatable {
     /// OpenFluxStartSessionPacketTunnel — как отдаёт OpenFluxShareDecode.
     var sessionSpecs: String?
 
+    /// Режим без сервера (phpbox): выход — PHP-нода на обычном веб-хостинге,
+    /// клиент говорит с ней потоками через комнату cups.online или документ
+    /// Mail.ru (`url`). Только TCP на 80/443, без ключа и без сессии.
+    var stream: Bool?
+    /// Сайт ноды на хостинге (https://…), чтобы будить её перед подключением.
+    /// Ключ доступа ноды — секрет, он лежит в Keychain (Secrets.phpToken).
+    var phpSite: String?
+
+    var isStream: Bool { stream == true }
+
     var transportKind: TransportKind { TransportKind(rawValue: transport) ?? .yandex }
 
     var isValid: Bool {
@@ -36,23 +46,22 @@ struct Profile: Identifiable, Codable, Equatable {
     /// One-line subtitle for the dropdown row.
     var subtitle: String {
         if transport == TransportKind.max.rawValue { return "MAX token" }
+        if isStream, let site = phpSite, !site.isEmpty {
+            return "Без сервера · " + site.replacingOccurrences(of: "https://", with: "")
+                .replacingOccurrences(of: "http://", with: "")
+        }
         return url
     }
 }
 
-/// Persists the profile list + current selection in UserDefaults.
+/// Persists the profile list + current selection in an on-device encrypted vault
+/// (AES-GCM file + Keychain key). Legacy plaintext UserDefaults is migrated once.
 @MainActor
 final class ProfileStore: ObservableObject {
     @Published var profiles: [Profile] = []
     @Published var selectedID: UUID?
 
-    private let key = "profiles.v1"
-    private let selKey = "profiles.selected.v1"
-
-    init() {
-        load()
-        runMigration()
-    }
+    init() { load() }
 
     var selected: Profile? {
         if let id = selectedID, let p = profiles.first(where: { $0.id == id }) { return p }
@@ -60,24 +69,14 @@ final class ProfileStore: ObservableObject {
     }
 
     func load() {
-        // Primary: UserDefaults (fast, in-process)
-        if let data = UserDefaults.standard.data(forKey: key),
-           let list = try? JSONDecoder().decode([Profile].self, from: data) {
-            profiles = list
-        }
-        if let s = UserDefaults.standard.string(forKey: selKey), let id = UUID(uuidString: s) {
-            selectedID = id
-        }
+        profiles = ProfileVault.loadProfiles()
+        selectedID = ProfileVault.loadSelectedID()
         if selectedID == nil { selectedID = profiles.first?.id }
     }
 
     func save() {
-        if let data = try? JSONEncoder().encode(profiles) {
-            UserDefaults.standard.set(data, forKey: key)
-            // Mirror to shared container so tunnel extension can see profile list
-            FileStorage.saveProfilesBackup(data)
-        }
-        UserDefaults.standard.set(selectedID?.uuidString, forKey: selKey)
+        try? ProfileVault.saveProfiles(profiles)
+        ProfileVault.saveSelectedID(selectedID)
     }
 
     func upsert(_ p: Profile) {
@@ -92,23 +91,11 @@ final class ProfileStore: ObservableObject {
 
     func delete(_ p: Profile) {
         profiles.removeAll { $0.id == p.id }
-        FileStorage.removeEncryptionKey(for: p.id)
-        FileStorage.removeDirectKey(for: p.id)
         if selectedID == p.id { selectedID = profiles.first?.id }
         save()
     }
 
     func select(_ id: UUID) { selectedID = id; save() }
-
-    // MARK: - One-time Keychain → file migration
-
-    private static let migrationKey = "filestore.migration.v1.done"
-
-    private func runMigration() {
-        guard !UserDefaults.standard.bool(forKey: Self.migrationKey) else { return }
-        FileStorage.migrateFromKeychain(profileIDs: profiles.map(\.id))
-        UserDefaults.standard.set(true, forKey: Self.migrationKey)
-    }
 }
 
 /// Parse an "OFLUX1:" config string (base64url of {t,u}) into a transport kind

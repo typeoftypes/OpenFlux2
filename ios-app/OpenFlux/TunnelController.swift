@@ -61,7 +61,7 @@ final class TunnelController: ObservableObject {
         // же запрос к документу упрётся в ту же капчу, хотя куки уже есть.
         // Раньше это делало только расширение, и локальный прокси стартовал без
         // кук вслепую.
-        let savedCookies = FileStorage.captchaCookies() ?? ""
+        let savedCookies = Secrets.captchaCookies() ?? ""
         savedCookies.withCString {
             OpenFluxSetInitialCookies(UnsafeMutablePointer(mutating: $0))
         }
@@ -113,7 +113,7 @@ final class TunnelController: ObservableObject {
         guard !running else { return }
         let addr = "127.0.0.1:\(port)"
         socksAddr = addr
-        (FileStorage.captchaCookies() ?? "").withCString {
+        (Secrets.captchaCookies() ?? "").withCString {
             OpenFluxSetInitialCookies(UnsafeMutablePointer(mutating: $0))
         }
         let rc = specs.withCString { sp in
@@ -128,6 +128,43 @@ final class TunnelController: ObservableObject {
         appendLog(rc == 0 ? "[app] session started on \(addr)" : "[app] session start failed (code \(rc))")
         running = OpenFluxIsRunning() != 0
         startPolling()
+    }
+
+    /// Режим без сервера: SOCKS5 в процессе приложения поверх потоков PHP-ноды
+    /// (cups.online-комната или документ Mail.ru). Ключа нет. Нужен мастеру
+    /// «Без сервера» для проверки ноды и локальному прокси stream-профиля.
+    @discardableResult
+    func startStream(transport: TransportKind, url: String, port: Int) -> Bool {
+        guard !running else { return false }
+        let addr = "127.0.0.1:\(port)"
+        socksAddr = addr
+        let rc = transport.rawValue.withCString { tt in
+            url.withCString { u in
+                addr.withCString { a in
+                    OpenFluxStartStreamClient(UnsafeMutablePointer(mutating: tt),
+                                              UnsafeMutablePointer(mutating: u),
+                                              UnsafeMutablePointer(mutating: a))
+                }
+            }
+        }
+        appendLog(rc == 0 ? "[app] stream client on \(addr) via \(transport.title)"
+                          : "[app] stream start failed (code \(rc))")
+        running = OpenFluxIsRunning() != 0
+        startPolling()
+        return rc == 0
+    }
+
+    /// Запускает локальный прокси профиля в его режиме: stream, session или
+    /// классический одиночный транспорт.
+    func start(profile p: Profile, port: Int) {
+        if p.isStream {
+            startStream(transport: p.transportKind, url: p.url, port: port)
+        } else if p.negotiate == true, let specs = p.sessionSpecs {
+            startSession(specs: specs, secret: Secrets.encryptionKey(for: p.id) ?? "", port: port)
+        } else {
+            start(transport: p.transportKind, url: p.url, maxToken: p.maxToken, maxUid: p.maxUid,
+                  port: port, encryptionKey: Secrets.encryptionKey(for: p.id) ?? "")
+        }
     }
 
     func stop() {
@@ -190,16 +227,10 @@ final class TunnelController: ObservableObject {
     /// Проверка, которую надо пройти в интересах УЗЛА: не отключая туннель,
     /// чтобы куки были выданы на его адрес.
     @Published var remoteCaptchaURL: String?
-    /// Script transport's own HTML page (shown instead of URL when set).
-    @Published var captchaHTML: String?
-    /// Pending page is the script's own — no cookie harvest.
-    @Published var captchaOwn: Bool = false
 
     private func pollCaptcha() {
         guard running else {
             if captchaURL != nil { captchaURL = nil }
-            if captchaHTML != nil { captchaHTML = nil }
-            captchaOwn = false
             return
         }
         if let c = OpenFluxCaptchaPending() {
@@ -208,13 +239,6 @@ final class TunnelController: ObservableObject {
             let next = s.isEmpty ? nil : s
             if next != captchaURL { captchaURL = next }
         }
-        if let c = OpenFluxCaptchaHTML() {
-            let s = String(cString: c)
-            OpenFluxFreeString(c)
-            let next = s.isEmpty ? nil : s
-            if next != captchaHTML { captchaHTML = next }
-        }
-        captchaOwn = OpenFluxCaptchaOwn() != 0
         if let c = OpenFluxRemoteCaptchaPending() {
             let s = String(cString: c)
             OpenFluxFreeString(c)
@@ -234,34 +258,11 @@ final class TunnelController: ObservableObject {
 
     /// Hands cookies solved in the WebView to the in-app core.
     func applyCaptchaCookies(_ header: String) {
-        header.withCString {
-            OpenFluxSetInitialCookies(UnsafeMutablePointer(mutating: $0))
-        }
         let n = header.withCString {
             OpenFluxApplyCaptchaCookies(UnsafeMutablePointer(mutating: $0))
         }
         appendLog("[app] captcha cookies handed to \(n) transport(s)")
         captchaURL = nil
-        captchaHTML = nil
-        captchaOwn = false
-    }
-
-    /// JSON from a script transport's own page (window.openfluxSubmit).
-    func submitCaptchaData(_ json: String) {
-        let err = json.withCString { c -> String in
-            guard let p = OpenFluxSubmitCaptchaData(UnsafeMutablePointer(mutating: c)) else { return "" }
-            let s = String(cString: p)
-            OpenFluxFreeString(p)
-            return s
-        }
-        if err.isEmpty {
-            appendLog("[app] captcha data accepted")
-            captchaURL = nil
-            captchaHTML = nil
-            captchaOwn = false
-        } else {
-            appendLog("[app] captcha data error: \(err)")
-        }
     }
 
     /// Connectivity check WITHOUT the local proxy — used when the system VPN is

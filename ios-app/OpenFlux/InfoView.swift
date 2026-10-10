@@ -1,13 +1,13 @@
 import SwiftUI
 import UIKit
 
-/// About screen with donation addresses (tap a row to copy).
+/// About screen: project info + support via Telegram.
 struct InfoView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var copied: String?
 
-    private let gram = "UQDzb_ImE9XMVwyNb3V6PKCCZaCKUKFQpaWhRajYg35SE2e5"
-    private let usdt = "TW4QFLy6pvejjuFdowanfbSfQWFprULcrc"
+    private let tg = "t.me/typeoftypes"
+    private let tgURL = URL(string: "https://t.me/typeoftypes")!
 
     var body: some View {
         NavigationView {
@@ -20,16 +20,39 @@ struct InfoView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Люблю t.me/typeoftypes ♥")
+                        Text("Поддержать проект ♥")
                             .font(.headline)
-                        Text("Нажми на адрес, чтобы скопировать.")
+                        Text("Напиши в Telegram — там же можно поддержать разработку.")
                             .font(.caption).foregroundColor(.secondary)
 
-                        donationRow(title: "Gram (TON)", address: gram)
-                        donationRow(title: "USDT (TRC20)", address: usdt)
+                        Link(destination: tgURL) {
+                            HStack {
+                                Image(systemName: "paperplane.fill")
+                                Text(tg)
+                                    .font(.subheadline.bold())
+                                Spacer()
+                                Image(systemName: "arrow.up.right")
+                                    .font(.caption)
+                            }
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(.tertiarySystemBackground))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.plain)
 
-                        if let c = copied {
-                            Label("\(c) скопирован", systemImage: "checkmark.circle.fill")
+                        Button {
+                            UIPasteboard.general.string = tg
+                            copied = "Telegram"
+                        } label: {
+                            Label(copied == "Telegram" ? "Скопировано" : "Скопировать t.me/typeoftypes",
+                                  systemImage: copied == "Telegram" ? "checkmark.circle.fill" : "doc.on.doc")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+
+                        if copied != nil {
+                            Label("Скопировано в буфер", systemImage: "checkmark.circle.fill")
                                 .font(.caption).foregroundColor(.green)
                         }
                     }
@@ -50,31 +73,5 @@ struct InfoView: View {
             }
         }
         .navigationViewStyle(.stack)
-    }
-
-    private func donationRow(title: String, address: String) -> some View {
-        Button {
-            UIPasteboard.general.string = address
-            copied = title
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(title).font(.subheadline).bold()
-                    Spacer()
-                    Image(systemName: "doc.on.doc").font(.caption)
-                }
-                Text(address)
-                    .font(.system(.caption2, design: .monospaced))
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .background(Color(.tertiarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
     }
 }

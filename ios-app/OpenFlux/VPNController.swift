@@ -30,9 +30,8 @@ final class VPNController: ObservableObject {
                dns: String, tunnelUDP: Bool, split: String = "",
                directDomains: String = "", profileID: UUID? = nil,
                keySlot: String = "", onDemand: Bool = true, nodeAddr: String = "",
-               session: String = "") {
+               session: String = "", stream: Bool = false) {
         Task {
-            logSink?("[app] Requesting VPN start...")
             let m = manager ?? NETunnelProviderManager()
             let proto = NETunnelProviderProtocol()
             proto.providerBundleIdentifier = extensionBundleId
@@ -49,13 +48,14 @@ final class VPNController: ObservableObject {
                 // is persisted with the VPN profile, so it must not hold secrets.
                 "profileID": profileID?.uuidString ?? "",
                 "keySlot": keySlot,   // "direct" = взять ключ прямого канала
+                // Адрес direct-канала узла: сигнал «session c direct» для
+                // маршрутизации (Яндекс в туннель, IP узла мимо).
                 "nodeAddr": nodeAddr,
+                // Готовый specs negotiate-профиля ({context,transports}). Не
+                // пусто = звать OpenFluxStartSessionPacketTunnel с этим и ключом.
                 "session": session,
-                
-                // Bypassing App Group requirement by passing keys and cookies in configuration
-                "encryptionKey": profileID.flatMap { FileStorage.encryptionKey(for: $0) } ?? "",
-                "directKey": profileID.flatMap { FileStorage.directKey(for: $0) } ?? "",
-                "captchaCookies": FileStorage.captchaCookies() ?? "",
+                // "1" = режим без сервера: OpenFluxStartStreamPacketTunnel.
+                "stream": stream ? "1" : "0",
             ]
             m.protocolConfiguration = proto
             m.localizedDescription = "OpenFlux"
@@ -75,7 +75,6 @@ final class VPNController: ObservableObject {
                 try m.connection.startVPNTunnel()
             } catch {
                 self.status = "Error: \(error.localizedDescription)"
-                self.logSink?("[app] VPN start error: \(error.localizedDescription)")
             }
         }
     }
@@ -138,7 +137,7 @@ final class VPNController: ObservableObject {
 
     private var activeSession: NETunnelProviderSession? {
         guard let s = manager?.connection as? NETunnelProviderSession,
-              s.status != .invalid && s.status != .disconnected
+              s.status == .connected || s.status == .reasserting || s.status == .connecting
         else { return nil }
         return s
     }
@@ -203,24 +202,12 @@ final class VPNController: ObservableObject {
         case .connecting:    status = "Connecting…";   active = true
         case .disconnecting: status = "Disconnecting…"; active = true
         case .reasserting:   status = "Reasserting…";  active = true
-        default:             
-            status = "Disconnected"
-            active = false
-            // Read last tunnel error log if available
-            if let groupURL = FileStorage.groupURL {
-                let logFile = groupURL.appendingPathComponent("last_tunnel_error.log")
-                if let errorText = try? String(contentsOf: logFile, encoding: .utf8), !errorText.isEmpty {
-                    Task { @MainActor in self.logSink?("[app] Tunnel exited with error log:\n\(errorText)") }
-                    try? FileManager.default.removeItem(at: logFile)
-                }
-            }
+        default:             status = "Disconnected";  active = false
         }
-        if conn.status == .connected || conn.status == .reasserting || conn.status == .connecting || conn.status == .disconnecting {
+        if conn.status == .connected || conn.status == .reasserting || conn.status == .connecting {
             startLogPolling()
         } else {
             stopLogPolling()
-            // Pull one last time to get any final failure logs before we stop polling
-            Task { @MainActor in self.pullLog() }
         }
     }
 }

@@ -54,6 +54,10 @@ struct ContentView: View {
     }
     @State private var editorTask: EditorTask?
     @State private var sharing: Profile?      // profile shown as a QR
+    /// Мастер «Своя нода без сервера» (PHP-хостинг).
+    @State private var showNoServer = false
+    /// Будим ноду stream-профиля (до ~15 с): повторное нажатие не запускает второй старт.
+    @State private var wakingNode = false
     @State private var testHint: String?
     /// Обёртка для .sheet(item:). С .sheet(isPresented:) и `if let` внутри тело
     /// шита становилось пустым (белый экран), как только опрос обнулял URL —
@@ -99,7 +103,7 @@ struct ContentView: View {
         guard let p = store.selected,
               p.transportKind == .yandex || p.transportKind == .volga,
               let addr = p.nodeAddr?.trimmingCharacters(in: .whitespaces), !addr.isEmpty,
-              FileStorage.directKey(for: p.id) != nil
+              Secrets.directKey(for: p.id) != nil
         else { return nil }
         return (addr, p.id)
     }
@@ -163,15 +167,35 @@ struct ContentView: View {
             vpn.stop()
         } else if let p = store.selected, p.isValid {
             tunnel.stop() // in-app core and system VPN can't share a document
-            vpn.start(transport: p.transport, url: p.url,
-                      maxToken: p.maxToken, maxUid: p.maxUid,
-                      dns: dnsSpec, tunnelUDP: tunnelUDP,
-                      split: splitRU ? "ru-direct" : "",
-                      directDomains: directDomains.joined,
-                      profileID: p.id, onDemand: autoReconnect,
-                      nodeAddr: p.nodeAddr ?? "",
-                      session: p.sessionSpecs ?? "")
+            // Режим без сервера: сперва будим ноду на хостинге (до VPN — пока
+            // туннель не поднят, приложение достаёт хостинг напрямую). Не
+            // ответила за ~15 с — подключаемся как есть.
+            if p.isStream, p.phpSite != nil {
+                guard !wakingNode else { return }
+                wakingNode = true
+                testHint = "Бужу ноду на хостинге…"
+                Task {
+                    let ok = await PhpBridge.wake(p)
+                    wakingNode = false
+                    testHint = ok ? "Нода на хостинге работает." : "Хостинг напрямую не ответил — подключаюсь как есть."
+                    startVPN(p)
+                }
+                return
+            }
+            startVPN(p)
         }
+    }
+
+    private func startVPN(_ p: Profile) {
+        vpn.start(transport: p.transport, url: p.url,
+                  maxToken: p.maxToken, maxUid: p.maxUid,
+                  dns: dnsSpec, tunnelUDP: tunnelUDP,
+                  split: splitRU ? "ru-direct" : "",
+                  directDomains: directDomains.joined,
+                  profileID: p.id, onDemand: autoReconnect,
+                  nodeAddr: p.nodeAddr ?? "",
+                  session: p.sessionSpecs ?? "",
+                  stream: p.isStream)
     }
 
     /// Оживляет yandex на узле, решая капчу «за узел» в IN-APP сессии (SOCKS в
@@ -183,7 +207,7 @@ struct ContentView: View {
             testHint = "Нужен session-профиль для оживления."
             return
         }
-        let key = FileStorage.encryptionKey(for: p.id) ?? ""
+        let key = Secrets.encryptionKey(for: p.id) ?? ""
         guard key.count >= 16 else { testHint = "У профиля нет ключа шифрования."; return }
         reviveStage = .connecting
         testHint = "Поднимаю in-app сессию для капчи (NE выключен)…"
@@ -194,6 +218,15 @@ struct ContentView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             tunnel.startSession(specs: specs, secret: key,
                                 port: (Int(socksPort) ?? 10808) + 7)
+            guard !tunnel.running else { return }
+            reviveStage = .idle
+            let own = p.url.split(separator: ",").first.map { String($0).trimmingCharacters(in: .whitespaces) }
+            guard let doc = own.flatMap({ URL(string: $0) }).flatMap({ $0.host != nil ? $0 : nil }) ?? yandexDocForPeer else {
+                testHint = "Узел недоступен, а ссылки на документ в профиле нет."
+                return
+            }
+            testHint = "Узел недоступен — сначала проверка Яндекса для этого телефона."
+            captchaTask = CaptchaTask(url: doc)
         }
     }
 
@@ -205,10 +238,7 @@ struct ContentView: View {
             tunnel.testThroughProxy()
             testHint = "Проверка через локальный прокси — результат в логе."
         } else if let p = store.selected, p.isValid {
-            tunnel.start(transport: p.transportKind, url: p.url,
-                         maxToken: p.maxToken, maxUid: p.maxUid,
-                         port: Int(socksPort) ?? 10808,
-                         encryptionKey: FileStorage.encryptionKey(for: p.id) ?? "")
+            tunnel.start(profile: p, port: Int(socksPort) ?? 10808)
             testHint = "Локальный прокси запущен — нажмите ещё раз для проверки."
         }
     }
@@ -365,6 +395,15 @@ struct ContentView: View {
             }
             .sheet(item: $sharing) { p in
                 ShareQRView(profile: p)
+            }
+            .sheet(isPresented: $showNoServer) {
+                NoServerWizardView(tunnel: tunnel, port: (Int(socksPort) ?? 10808) + 9,
+                                   vpnActive: vpn.active) { p, token in
+                    Secrets.setPhpToken(token, for: p.id)
+                    store.upsert(p)
+                    store.select(p.id)
+                    testHint = "Профиль «\(p.name)» добавлен: нода на своём хостинге."
+                }
             }
         }
         .navigationViewStyle(.stack)
@@ -541,7 +580,7 @@ struct ContentView: View {
     private func handleCaptchaCookies(_ header: String) {
         // Сохраняем всегда: если ядра сейчас нет (туннель погашен ради капчи),
         // это единственный способ донести куки до следующего старта.
-        FileStorage.setCaptchaCookies(header)
+        Secrets.setCaptchaCookies(header)
 
         if vpn.active {
             vpn.applyCaptchaCookies(header)
@@ -634,13 +673,22 @@ struct ContentView: View {
     @ViewBuilder
     private var profilePicker: some View {
         if store.profiles.isEmpty {
-            Button {
-                editorTask = EditorTask(profile: nil)
-            } label: {
-                Label("Добавить профиль", systemImage: "plus.circle.fill")
-                    .frame(maxWidth: .infinity).padding(.vertical, 6)
+            VStack(spacing: 10) {
+                Button {
+                    editorTask = EditorTask(profile: nil)
+                } label: {
+                    Label("Добавить профиль", systemImage: "plus.circle.fill")
+                        .frame(maxWidth: .infinity).padding(.vertical, 6)
+                }
+                .buttonStyle(.borderedProminent)
+                Button {
+                    showNoServer = true
+                } label: {
+                    Label("Своя нода без сервера", systemImage: "server.rack")
+                        .frame(maxWidth: .infinity).padding(.vertical, 4)
+                }
+                .buttonStyle(.bordered)
             }
-            .buttonStyle(.borderedProminent)
         } else {
             profileMenu
         }
@@ -675,6 +723,9 @@ struct ContentView: View {
             Button {
                 editorTask = EditorTask(profile: nil)
             } label: { Label("Добавить профиль…", systemImage: "plus") }
+            Button {
+                showNoServer = true
+            } label: { Label("Своя нода без сервера…", systemImage: "server.rack") }
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: transportIcon(store.selected?.transport))
@@ -815,6 +866,19 @@ struct ProfileEditorView: View {
                     }
                 }
 
+                if let p = profile, p.isStream {
+                    Section {
+                        Label("Без сервера: PHP-нода на хостинге", systemImage: "server.rack")
+                        if let site = p.phpSite, !site.isEmpty {
+                            Text(site).font(.system(.caption, design: .monospaced)).foregroundColor(.secondary)
+                        }
+                    } footer: {
+                        Text(p.phpSite == nil
+                             ? "Профиль из ссылки: подключается к уже работающей ноде. Будить её умеет устройство, которое её ставило."
+                             : "Перед подключением приложение будит ноду на хостинге. Только TCP на портах 80 и 443, без ключа шифрования.")
+                    }
+                }
+
                 if let specs = profile?.sessionSpecs,
                    let carriers = Self.parseSessionCarriers(specs), !carriers.isEmpty {
                     Section("Мультитранспорт (session)") {
@@ -878,7 +942,7 @@ struct ProfileEditorView: View {
                         Text("Слишком короткий: нужно минимум 16 символов.")
                             .font(.caption2).foregroundColor(.red)
                     } else {
-                        Label("Ключ сохранится в защищённом файле, не в настройках VPN.",
+                        Label("Ключ сохранится в Keychain, не в настройках VPN.",
                               systemImage: "lock.fill")
                             .font(.caption2).foregroundColor(.secondary)
                     }
@@ -952,9 +1016,9 @@ struct ProfileEditorView: View {
         guard let p = profile else { return }
         id = p.id; name = p.name; transportRaw = p.transport
         maxToken = p.maxToken; maxUid = p.maxUid
-        encryptionKey = FileStorage.encryptionKey(for: p.id) ?? ""
+        encryptionKey = Secrets.encryptionKey(for: p.id) ?? ""
         nodeAddr = p.nodeAddr ?? ""
-        directKey = FileStorage.directKey(for: p.id) ?? ""
+        directKey = Secrets.directKey(for: p.id) ?? ""
         let parts = p.url.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
         switch p.transportKind {
         case .yandex:
@@ -983,6 +1047,14 @@ struct ProfileEditorView: View {
         if ShareLink.looksLikeLink(s) {
             let (cfg, session, err) = ShareLink.decode(s)
             if let cfg = cfg {
+                // Режим без сервера ("mode":"stream"): свой профиль, без ключа.
+                // Классический путь его не понял бы — cups/mail.ru там говорят
+                // другим протоколом, чем PHP-нода.
+                if cfg.isStream, let many = onImportMany {
+                    many(ShareImporter.buildStream(from: cfg))
+                    dismiss()
+                    return true
+                }
                 // Session-ссылка (--negotiate): заводим ОДИН session-профиль
                 // через apply — ключ идёт в ОСНОВНОЙ слот, а specs/контекст
                 // сохраняются (иначе yandex стартует без ключа и с чужим KDF).
@@ -1040,7 +1112,20 @@ struct ProfileEditorView: View {
             }
         }
         if let s = cfg.secret, !s.isEmpty {
-            if transport == .direct { encryptionKey = s } else { directKey = s }
+            // В какой слот класть секрет — как в ShareImporter.build: без
+            // прямого канала секрет это ключ ОСНОВНОГО транспорта (его читает
+            // старт), поэтому он идёт в encryptionKey. Если в ссылке есть
+            // direct-канал, секрет относится к нему (directKey; у доков с ним
+            // общий контекст). Профиль direct держит ключ в основном слоте.
+            // Раньше для любого недирект-транспорта секрет молча уезжал в
+            // directKey, и у классической зашифрованной ссылки главный ключ
+            // оставался пустым — «ключ не попадает в конфиг» при скане QR.
+            let hasDirect = !(cfg.directDial ?? "").isEmpty
+            if transport == .direct || !hasDirect {
+                encryptionKey = s
+            } else {
+                directKey = s
+            }
         }
         if let d = cfg.directDial, transport != .direct {
             nodeAddr = d
@@ -1082,14 +1167,26 @@ struct ProfileEditorView: View {
         case .max:
             url = ""
         }
-        // Ключ идёт в файловое хранилище, не в настройки VPN (которые хранятся
-        // системой в открытом виде). Пустое поле удаляет сохранённое значение.
-        FileStorage.setEncryptionKey(encryptionKey, for: id)
-        FileStorage.setDirectKey(directKey, for: id)
-        onSave(Profile(id: id, name: name.trimmingCharacters(in: .whitespaces),
-                       transport: transportRaw, url: url,
-                       maxToken: maxToken, maxUid: maxUid,
-                       nodeAddr: nodeAddr.trimmingCharacters(in: .whitespaces)))
+        // The secret goes to the shared Keychain, never into the profile record
+        // (which lives in plain UserDefaults). An emptied field removes it.
+        Secrets.setEncryptionKey(encryptionKey, for: id)
+        Secrets.setDirectKey(directKey, for: id)
+        // От исходного профиля, а не с нуля: иначе молча терялось всё, чего нет
+        // в форме, — negotiate и specs session-профиля (он после «Сохранить»
+        // становился классическим) и поля режима без сервера.
+        var p = profile ?? Profile(name: "", transport: transportRaw)
+        p.id = id
+        p.name = name.trimmingCharacters(in: .whitespaces)
+        p.transport = transportRaw
+        p.url = url
+        p.maxToken = maxToken
+        p.maxUid = maxUid
+        p.nodeAddr = nodeAddr.trimmingCharacters(in: .whitespaces)
+        if p.isStream, transport != .cupsonline, transport != .mail {
+            p.stream = nil   // сменили носитель — PHP-нода говорит только через cups/mail.ru
+            p.phpSite = nil
+        }
+        onSave(p)
         dismiss()
     }
 }
@@ -1239,9 +1336,7 @@ struct SettingsSheet: View {
                         }
                     } else if let p = selectedProfile, p.isValid {
                         Button {
-                            tunnel.start(transport: p.transportKind, url: p.url,
-                                         maxToken: p.maxToken, maxUid: p.maxUid, port: port,
-                                         encryptionKey: FileStorage.encryptionKey(for: p.id) ?? "")
+                            tunnel.start(profile: p, port: port)
                         } label: {
                             Label("Запустить локальный прокси", systemImage: "play.fill")
                         }

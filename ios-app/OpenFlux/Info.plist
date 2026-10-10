@@ -31,10 +31,6 @@
 	<string>Сканирование QR-кода конфигурации для добавления профиля.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
-	<key>LSSupportsOpeningDocumentsInPlace</key>
-	<true/>
-	<key>UIFileSharingEnabled</key>
-	<true/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
