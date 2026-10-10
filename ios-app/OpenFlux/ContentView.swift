@@ -35,7 +35,7 @@ struct ContentView: View {
     @AppStorage("splitRU") private var splitRU: Bool = false
     @AppStorage("dnsPreset") private var dnsPreset: String = "default"
     @AppStorage("dnsCustom") private var dnsCustom: String = ""
-    @AppStorage("tunnelUDP") private var tunnelUDP: Bool = false
+    @AppStorage("tunnelUDP") private var tunnelUDP: Bool = true
     // On-demand авто-переподключение системного VPN. Вкл по умолчанию (как было),
     // но выключаемо: при флапе тоннеля on-demand не даёт докачать обновление из
     // TestFlight/App Store — тот самый софтлок «не могу обновиться».

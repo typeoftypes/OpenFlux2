@@ -27,6 +27,18 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// (captcha-api/smartcaptcha/doc) идёт через туннель ради привязки к IP узла.
     static let staticDirectHosts = "yastatic.net"
 
+    /// Mail.ru Docs backend — must bypass the tunnel or the extension's own
+    /// WebSocket to docs.datacloudmail.ru loops into the VPN (SOCKS works,
+    /// system VPN looks "Connected" with zero traffic / no [ext] logs).
+    static let mailruDirectHosts = """
+    cloud.mail.ru
+    docs.datacloudmail.ru
+    datacloudmail.ru
+    mail.ru
+    swa.mail.ru
+    api.mail.ru
+    """
+
     /// Литерал IPv4 или имя хоста — от этого зависит, можно ли добавить
     /// статический /32 или надо ждать DNS-ответа.
     static func isIPv4(_ s: String) -> Bool {
@@ -124,6 +136,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         let conf = (protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration ?? [:]
         let transport = (conf["transport"] as? String) ?? "yandex"
         let url = (conf["url"] as? String) ?? ""
+        // Always surface extension lifecycle in the app log panel (IPC "log").
+        let debugOn = (conf["debug"] as? String) != "0"
+        OpenFluxSetDebug(debugOn ? 1 : 0)
+        logTail.append("[ext] startTunnel transport=\(transport) urlLen=\(url.count) debug=\(debugOn ? 1 : 0)")
         // Адрес direct-канала узла (host:port) для session-профиля (direct+doc).
         // Его наличие означает: рабочий носитель — direct, значит Яндекс должен
         // идти ЧЕРЕЗ туннель (для капчи «за узел»), а IP узла — мимо.
@@ -220,15 +236,26 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // идёт через direct, и Яндекс надо пускать В туннель (капча «за узел»).
         let isYandexType = (transport == "yandex" || transport == "volga" || transport == "boards")
         let yandexFamily = isYandexType && nodeAddr.isEmpty
+        // mail / mailru — same class of bug as yandex: carrier WS must leave
+        // the device directly, not through the VPN default route.
+        let isMailruType = (transport == "mailru" || transport == "mail")
+        // cupsonline API/WS also needs a direct path out of the extension.
+        let isCupsType = (transport == "cupsonline" || transport == "cups")
+        let carrierNeedsDirectDNS = yandexFamily || isMailruType || isCupsType
 
-        // DoT-резолверы (:853) исключаем ТОЛЬКО для yandex-носителя (ему DNS
-        // нужен ДО туннеля, чтобы зарезолвить сам Яндекс). Для direct/session
-        // пускаем DoT ЧЕРЕЗ туннель: direct дозванивается по фиксированному IP
-        // узла (DNS не нужен), а запрос DoT выйдет с IP узла — где порт 853 не
-        // блокнут. Это чинит «зелёное, но нет соединения» в сетях, режущих 853.
-        self.baseExcluded = (yandexFamily ? Self.dotBypassRoutes + Self.yandexBypassRoutes : [])
-            + nodeRoutes
-            + (splitRU ? Self.ruDirectRoutes : [])
+        // DoT-резолверы (:853) исключаем когда носителю нужен DNS ДО туннеля
+        // (yandex/mailru/cups). Для pure direct — DoT через туннель.
+        var excluded = nodeRoutes
+        if carrierNeedsDirectDNS {
+            excluded.append(contentsOf: Self.dotBypassRoutes)
+        }
+        if yandexFamily {
+            excluded.append(contentsOf: Self.yandexBypassRoutes)
+        }
+        if splitRU {
+            excluded.append(contentsOf: Self.ruDirectRoutes)
+        }
+        self.baseExcluded = excluded
         ipv4.excludedRoutes = self.baseExcluded
         settings.ipv4Settings = ipv4
         settings.mtu = 1500
@@ -257,6 +284,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // «за узел» утечёт с IP клиента).
         var geoLines: [String] = [Self.staticDirectHosts]   // yastatic.net — всегда напрямую
         if yandexFamily { geoLines.append(Self.alwaysDirectHosts) }
+        if isMailruType { geoLines.append(Self.mailruDirectHosts) }
+        if isCupsType {
+            geoLines.append("cups.online\ncentrifugo.cups.online")
+        }
         if !nodeHostForDNS.isEmpty { geoLines.append(nodeHostForDNS) }
         if splitRU, let url = Bundle(for: PacketTunnelProvider.self)
             .url(forResource: "geosite-ru", withExtension: "txt"),
@@ -313,6 +344,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 }
             }
             if rc != 0 {
+                self.logTail.append("[ext] packet core start FAILED rc=\(rc)")
                 completionHandler(NSError(domain: "OpenFlux", code: Int(rc),
                     userInfo: [NSLocalizedDescriptionKey: "start failed (\(rc))"]))
                 return
@@ -322,6 +354,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             self.startHealthMonitor()
             if self.geoSiteActive { self.startGeoSiteMonitor() }
             self.startLogDrain()
+            self.logTail.append("[ext] packet core started (rc=\(rc)); read/write loops up")
+            self.drainLog()
             completionHandler(nil)
         }
     }
