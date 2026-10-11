@@ -36,13 +36,11 @@ final class VPNController: ObservableObject {
             let proto = NETunnelProviderProtocol()
             proto.providerBundleIdentifier = extensionBundleId
             proto.serverAddress = "OpenFlux"
-            let debugOn = UserDefaults.standard.bool(forKey: "debugLog")
             proto.providerConfiguration = [
                 "transport": transport, "url": url,
                 "maxToken": maxToken, "maxUid": maxUid,
                 "dns": dns,
                 "udp": tunnelUDP ? "1" : "0",
-                "debug": debugOn ? "1" : "1", // force on until IPC logs are verified
                 "split": split,   // "ru-direct" = GeoIP RU bypasses the tunnel
                 "directDomains": directDomains,  // user's own bypass suffixes
                 // Only the profile id — the encryption secret itself stays in the
@@ -75,18 +73,8 @@ final class VPNController: ObservableObject {
                 try await m.loadFromPreferences()   // required before starting
                 self.manager = m
                 try m.connection.startVPNTunnel()
-                self.logSink?("[app] VPN start requested (extension process). Logs come from the tunnel via IPC…")
-                self.startLogPolling()
-                // First pulls often miss while the extension boots — retry a few times.
-                for delay in [0.5, 1.5, 3.0, 6.0] {
-                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-                    self.pullLog()
-                }
-                // If still only app-side lines, the extension is not answering IPC.
-                self.logSink?("[app] if you see no [ext]/[M-DOCS]/[SESSION] lines above, the Network Extension is not running or IPC failed (check VPN profile / signing).")
             } catch {
                 self.status = "Error: \(error.localizedDescription)"
-                self.logSink?("[app] VPN start failed: \(error.localizedDescription)")
             }
         }
     }
@@ -124,13 +112,9 @@ final class VPNController: ObservableObject {
 
     private func startLogPolling() {
         guard logTimer == nil else { return }
-        // .common so the timer fires during scroll/UI tracking (default mode often stalls).
-        let timer = Timer(timeInterval: 0.7, repeats: true) { [weak self] _ in
+        logTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.pullLog() }
         }
-        RunLoop.main.add(timer, forMode: .common)
-        logTimer = timer
-        pullLog()
     }
 
     private func stopLogPolling() {
@@ -141,15 +125,11 @@ final class VPNController: ObservableObject {
     private func pullLog() {
         guard let session = activeSession, let msg = "log".data(using: .utf8) else { return }
         // Throws if the extension isn't up yet; that is normal during startup.
-        do {
-            try session.sendProviderMessage(msg) { [weak self] data in
-                guard let data = data, !data.isEmpty,
-                      let s = String(data: data, encoding: .utf8), !s.isEmpty
-                else { return }
-                Task { @MainActor in self?.logSink?(s) }
-            }
-        } catch {
-            // Extension not ready yet — ignore; next timer tick retries.
+        try? session.sendProviderMessage(msg) { [weak self] data in
+            guard let data = data, !data.isEmpty,
+                  let s = String(data: data, encoding: .utf8), !s.isEmpty
+            else { return }
+            Task { @MainActor in self?.logSink?(s) }
         }
         pullCaptcha(session)
         pullRemoteCaptcha(session)
