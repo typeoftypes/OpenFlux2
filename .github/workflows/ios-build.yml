@@ -270,24 +270,45 @@ jobs:
         env:
           IOS_PATH: ${{ steps.params.outputs.ios_path }}
         run: |
-          set -e
-          # build_ios.sh lives at the repository root and writes output/ios/.
+          set -euo pipefail
+          # Build from THIS checkout (mobile/ios + transport/), never a stale
+          # core/ submodule. build_ios.sh verifies the mailru User-Agent is
+          # embedded in the archive before we hand it to Xcode.
           if [ ! -f build_ios.sh ]; then
             echo "::error::build_ios.sh not found in $PWD"
             exit 1
           fi
+          if [ ! -f transport/mailru/mailru.go ]; then
+            echo "::error::transport/mailru/mailru.go missing — wrong ref/checkout?"
+            exit 1
+          fi
+          echo "mailruUserAgent in source:"
+          grep -n 'mailruUserAgent' transport/mailru/mailru.go || true
+
           chmod +x build_ios.sh
           ./build_ios.sh
+
           if [ ! -f output/ios/liboflux.a ]; then
             echo "::error::build_ios.sh did not produce output/ios/liboflux.a"
             ls -la output/ios/ 2>/dev/null || true
             exit 1
           fi
-          # project.yml declares Lib/liboflux.a as a framework and Lib as a
-          # source path for both targets, so both must be present.
+
+          echo "UA strings in liboflux.a:"
+          strings output/ios/liboflux.a | grep -E 'Mozilla/5\.0|Firefox/|Chrome/|iPhone OS|Macintosh' | sort -u | head -20 || true
+
           mkdir -p "$IOS_PATH/Lib"
-          cp output/ios/liboflux.a "$IOS_PATH/Lib/"
-          cp output/ios/liboflux.h "$IOS_PATH/Lib/" 2>/dev/null || true
+          cp -f output/ios/liboflux.a "$IOS_PATH/Lib/"
+          # cgo names the header after the output basename
+          if [ -f output/ios/liboflux.h ]; then
+            cp -f output/ios/liboflux.h "$IOS_PATH/Lib/"
+          elif [ -f output/ios/liboflux.h ]; then
+            cp -f output/ios/liboflux.h "$IOS_PATH/Lib/"
+          else
+            # sometimes written as same stem next to .a only
+            h="$(ls output/ios/*.h 2>/dev/null | head -1 || true)"
+            if [ -n "$h" ]; then cp -f "$h" "$IOS_PATH/Lib/liboflux.h"; fi
+          fi
           ls -la "$IOS_PATH/Lib/"
       - name: Generate Xcode project (XcodeGen)
         env:
