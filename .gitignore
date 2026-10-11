@@ -1,7 +1,7 @@
+OpenFlux-core/
 ios-app/Lib/*.a
 ios-app/Lib/*.h
 ios-app/Lib/openflux-core.version
 ios-app/OpenFlux.xcodeproj/
-ios-app/DerivedData/
 ios-app/build/
-OpenFlux-core/output/
+ios-app/DerivedData/

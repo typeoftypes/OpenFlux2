@@ -54,7 +54,7 @@ struct Profile: Identifiable, Codable, Equatable {
     }
 }
 
-/// Persists the profile list + current selection in UserDefaults.
+/// Persists profiles in an encrypted local vault (Application Support + Keychain).
 @MainActor
 final class ProfileStore: ObservableObject {
     @Published var profiles: [Profile] = []
@@ -71,6 +71,12 @@ final class ProfileStore: ObservableObject {
     }
 
     func load() {
+        if let vault = ProfileVault.load() {
+            profiles = vault.profiles
+            selectedID = vault.selectedID
+            return
+        }
+        // Legacy UserDefaults (pre-vault)
         if let data = UserDefaults.standard.data(forKey: key),
            let list = try? JSONDecoder().decode([Profile].self, from: data) {
             profiles = list
@@ -78,10 +84,14 @@ final class ProfileStore: ObservableObject {
         if let s = UserDefaults.standard.string(forKey: selKey), let id = UUID(uuidString: s) {
             selectedID = id
         }
-        if selectedID == nil { selectedID = profiles.first?.id }
     }
 
     func save() {
+        let payload = ProfileVault.Payload(profiles: profiles, selectedID: selectedID)
+        if ProfileVault.save(payload) {
+            return
+        }
+        // Fallback if vault unavailable
         if let data = try? JSONEncoder().encode(profiles) {
             UserDefaults.standard.set(data, forKey: key)
         }

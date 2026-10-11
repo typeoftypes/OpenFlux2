@@ -1,43 +1,26 @@
-# OpenFlux iOS (submodule core, as Android)
+# iOS: локальное хранение + сборка через OpenFlux-core
 
-| Path | Role |
-|------|------|
-| `OpenFlux-core/` | **git submodule** — Go core (`mobile/`, `transport/`, …) |
-| `ios-app/` | SwiftUI + Network Extension |
-| `scripts/build-ios-core.sh` | как `build-android-core.sh` → `ios-app/Lib/liboflux.a` |
+## Профили на устройстве
+- Файл: `Application Support/OpenFlux/profiles.vault` (AES-GCM)
+- Ключ: Keychain (`ThisDeviceOnly`)
+- Миграция со старых UserDefaults — один раз автоматически
 
-Имя **OpenFlux-core** (не `OpenFlux`), чтобы не путать с приложением.
-
-## Clone
+## Сборка ядра (без git submodule)
 
 ```bash
-git clone --recurse-submodules <repo>
-# или:
-git submodule update --init --recursive OpenFlux-core
-```
+# из корня monorepo (mobile/ + transport/ уже здесь)
+./scripts/sync-openflux-core.sh   # копирует ядро в ./OpenFlux-core
+./scripts/build-ios-core.sh       # → ios-app/Lib/liboflux.a
 
-По умолчанию:
-
-```
-OpenFlux-core → https://github.com/p1neappleXpress/OpenFlux.git
-```
-
-Свой форк:
-
-```bash
-# url в .gitmodules → https://github.com/typeoftypes/OpenFlux2.git
-git submodule sync OpenFlux-core
-git submodule update --init --remote OpenFlux-core
-```
-
-## Build (macOS)
-
-```bash
-./scripts/build-ios-core.sh
-# или
+# или одной командой:
 ./build_ios.sh
 ```
 
-→ `ios-app/Lib/liboflux.a`, `liboflux.h`, `openflux-core.version`
+`OpenFlux-core/` — **локальная папка** (в `.gitignore`), не submodule → CI не падает на recursive.
 
-UA/mailru: **`OpenFlux-core/transport/mailru/mailru.go`**, затем снова `./scripts/build-ios-core.sh`.
+## CI
+```yaml
+- uses: actions/checkout@v7   # без submodules
+- run: ./build_ios.sh
+- run: mkdir -p ios-app/Lib && cp output/... # build-ios-core already fills ios-app/Lib
+```
