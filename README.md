@@ -1,26 +1,43 @@
-# OpenFlux2 mailru + iOS build fix
+# OpenFlux iOS (submodule core, as Android)
 
-## Files
-- `transport/mailru/mailru.go` — Safari iPhone UA, mobileweb API, cookies, WS compression, 409 rotate, Engine.IO wait, log `UA=...`
-- `build_ios.sh` — build from local mobile/, verify UA without Xcode strings pipefail
-- `ios-app/OpenFluxTunnel/PacketTunnelProvider.swift` — mail.ru hosts bypass VPN (no WS loop)
+| Path | Role |
+|------|------|
+| `OpenFlux-core/` | **git submodule** — Go core (`mobile/`, `transport/`, …) |
+| `ios-app/` | SwiftUI + Network Extension |
+| `scripts/build-ios-core.sh` | как `build-android-core.sh` → `ios-app/Lib/liboflux.a` |
 
-## Apply
+Имя **OpenFlux-core** (не `OpenFlux`), чтобы не путать с приложением.
+
+## Clone
+
 ```bash
-cd ~/github/OpenFlux2
-cp transport/mailru/mailru.go transport/mailru/
-cp build_ios.sh ./
-# optional VPN loop fix:
-cp ios-app/OpenFluxTunnel/PacketTunnelProvider.swift ios-app/OpenFluxTunnel/
+git clone --recurse-submodules <repo>
+# или:
+git submodule update --init --recursive OpenFlux-core
+```
 
-# CI macos or Mac:
+По умолчанию:
+
+```
+OpenFlux-core → https://github.com/p1neappleXpress/OpenFlux.git
+```
+
+Свой форк:
+
+```bash
+# url в .gitmodules → https://github.com/typeoftypes/OpenFlux2.git
+git submodule sync OpenFlux-core
+git submodule update --init --remote OpenFlux-core
+```
+
+## Build (macOS)
+
+```bash
+./scripts/build-ios-core.sh
+# или
 ./build_ios.sh
-cp output/ios/liboflux.* ios-app/Lib/
 ```
 
-## Verify in app log
-```
-[M-DOCS] start weblink=... UA=Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 ...
-[M-DOCS] WebSocket connected
-[M-DOCS] Auth OK
-```
+→ `ios-app/Lib/liboflux.a`, `liboflux.h`, `openflux-core.version`
+
+UA/mailru: **`OpenFlux-core/transport/mailru/mailru.go`**, затем снова `./scripts/build-ios-core.sh`.

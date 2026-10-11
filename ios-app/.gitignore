@@ -1,0 +1,6 @@
+Lib/*.a
+Lib/*.h
+Lib/openflux-core.version
+OpenFlux.xcodeproj/
+DerivedData/
+build/

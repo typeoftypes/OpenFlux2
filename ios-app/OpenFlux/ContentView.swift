@@ -35,7 +35,7 @@ struct ContentView: View {
     @AppStorage("splitRU") private var splitRU: Bool = false
     @AppStorage("dnsPreset") private var dnsPreset: String = "default"
     @AppStorage("dnsCustom") private var dnsCustom: String = ""
-    @AppStorage("tunnelUDP") private var tunnelUDP: Bool = true
+    @AppStorage("tunnelUDP") private var tunnelUDP: Bool = false
     // On-demand авто-переподключение системного VPN. Вкл по умолчанию (как было),
     // но выключаемо: при флапе тоннеля on-demand не даёт докачать обновление из
     // TestFlight/App Store — тот самый софтлок «не могу обновиться».
@@ -187,9 +187,6 @@ struct ContentView: View {
     }
 
     private func startVPN(_ p: Profile) {
-        // Relay extension logs into the same panel as the in-app SOCKS core.
-        vpn.logSink = { [weak tunnel] line in tunnel?.appendExternal(line) }
-        tunnel.appendExternal("[app] starting system VPN…")
         vpn.start(transport: p.transport, url: p.url,
                   maxToken: p.maxToken, maxUid: p.maxUid,
                   dns: dnsSpec, tunnelUDP: tunnelUDP,

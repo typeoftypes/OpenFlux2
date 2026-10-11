@@ -1,14 +1,14 @@
 name: OpenFlux
 options:
-  bundleIdPrefix: com.p1neapplexpress-saharev
+  bundleIdPrefix: com.typeoftypes
   deploymentTarget:
     iOS: "15.0"
   createIntermediateGroups: true
 
 settings:
   base:
-    MARKETING_VERSION: "1.2.1"
-    CURRENT_PROJECT_VERSION: "95"
+    MARKETING_VERSION: "1.3.0"
+    CURRENT_PROJECT_VERSION: "94"
     DEVELOPMENT_TEAM: "8GQH8GQ252"
 
 targets:
@@ -44,10 +44,10 @@ targets:
         # Shared with the tunnel extension so the encryption secret lives in the
         # Keychain instead of the VPN provider configuration.
         keychain-access-groups:
-          - $(AppIdentifierPrefix)com.p1neapplexpress-saharev.openflux
+          - $(AppIdentifierPrefix)com.typeoftypes.openflux
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.p1neapplexpress-saharev.openflux
+        PRODUCT_BUNDLE_IDENTIFIER: com.typeoftypes.openflux
         PRODUCT_NAME: OpenFlux
         INFOPLIST_KEY_CFBundleDisplayName: OpenFlux
         SWIFT_OBJC_BRIDGING_HEADER: OpenFlux/OpenFlux-Bridging-Header.h
@@ -95,10 +95,10 @@ targets:
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
         keychain-access-groups:
-          - $(AppIdentifierPrefix)com.p1neapplexpress-saharev.openflux
+          - $(AppIdentifierPrefix)com.typeoftypes.openflux
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.p1neapplexpress-saharev.openflux.tunnel
+        PRODUCT_BUNDLE_IDENTIFIER: com.typeoftypes.openflux.tunnel
         PRODUCT_NAME: OpenFluxTunnel
         SWIFT_OBJC_BRIDGING_HEADER: OpenFluxTunnel/Tunnel-Bridging-Header.h
         SWIFT_VERSION: "5.0"
