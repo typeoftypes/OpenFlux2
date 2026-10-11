@@ -54,14 +54,12 @@ struct Profile: Identifiable, Codable, Equatable {
     }
 }
 
-/// Persists the profile list + current selection in UserDefaults.
+/// Persists the profile list + current selection in an on-device encrypted vault
+/// (AES-GCM file + Keychain key). Legacy plaintext UserDefaults is migrated once.
 @MainActor
 final class ProfileStore: ObservableObject {
     @Published var profiles: [Profile] = []
     @Published var selectedID: UUID?
-
-    private let key = "profiles.v1"
-    private let selKey = "profiles.selected.v1"
 
     init() { load() }
 
@@ -71,21 +69,14 @@ final class ProfileStore: ObservableObject {
     }
 
     func load() {
-        if let data = UserDefaults.standard.data(forKey: key),
-           let list = try? JSONDecoder().decode([Profile].self, from: data) {
-            profiles = list
-        }
-        if let s = UserDefaults.standard.string(forKey: selKey), let id = UUID(uuidString: s) {
-            selectedID = id
-        }
+        profiles = ProfileVault.loadProfiles()
+        selectedID = ProfileVault.loadSelectedID()
         if selectedID == nil { selectedID = profiles.first?.id }
     }
 
     func save() {
-        if let data = try? JSONEncoder().encode(profiles) {
-            UserDefaults.standard.set(data, forKey: key)
-        }
-        UserDefaults.standard.set(selectedID?.uuidString, forKey: selKey)
+        try? ProfileVault.saveProfiles(profiles)
+        ProfileVault.saveSelectedID(selectedID)
     }
 
     func upsert(_ p: Profile) {
