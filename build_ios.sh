@@ -25,7 +25,6 @@ echo "    root:   $ROOT"
 echo "    module: ${MODULE:-(unknown)}"
 echo "    UA:     ${UA:-(not found in mailru.go)}"
 
-# Require macOS + iPhoneOS SDK for GOOS=ios c-archive.
 if [ "$(uname -s)" != "Darwin" ]; then
   echo "error: iOS c-archive must be built on macOS (Xcode). This host is $(uname -s)." >&2
   exit 1
@@ -34,7 +33,6 @@ fi
 XCODE_PATH="${XCODE_PATH:-/Applications/Xcode.app}"
 SDK_PATH="${SDK_PATH:-$XCODE_PATH/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk}"
 if [ ! -d "$SDK_PATH" ]; then
-  # Fallback: xcrun
   SDK_PATH="$(xcrun --sdk iphoneos --show-sdk-path 2>/dev/null || true)"
 fi
 if [ -z "${SDK_PATH}" ] || [ ! -d "$SDK_PATH" ]; then
@@ -68,23 +66,38 @@ fi
 echo "==> Built: $OUT"
 ls -lh "$OUT"
 
-echo "==> UA strings inside archive:"
-strings "$OUT" | grep -E 'Mozilla/5\.0|Firefox/|Chrome/|iPhone OS|Macintosh' | sort -u | head -20 || true
+# Dump printable strings to a file. Prefer /usr/bin/strings — Xcode's strings
+# often exits with "failed to flush output" when piped under pipefail, even
+# though the UA is present in the archive (false CI failure).
+STRINGS_BIN="/usr/bin/strings"
+[ -x "$STRINGS_BIN" ] || STRINGS_BIN="$(command -v strings)"
+STRINGS_FILE="$OUT_DIR/liboflux.strings.txt"
+# Do not fail the build if strings itself is noisy/broken.
+set +e
+"$STRINGS_BIN" "$OUT" >"$STRINGS_FILE" 2>/dev/null
+# Fallback: tr/filter if strings produced nothing useful
+if [ ! -s "$STRINGS_FILE" ]; then
+  tr -cd '\11\12\15\40-\176' <"$OUT" | tr ' ' '\n' | grep -E '.{8,}' >"$STRINGS_FILE" 2>/dev/null
+fi
+set -e
 
-# Fail if source declares a distinctive marker that is missing from the binary.
+echo "==> UA strings inside archive:"
+grep -E 'Mozilla/5\.0|Firefox/|Chrome/|iPhone OS|Macintosh' "$STRINGS_FILE" | sort -u | head -20 || true
+
 if [ -n "$UA" ]; then
   MARKER="$(printf '%s' "$UA" | grep -oE 'Firefox/[0-9]+|Chrome/[0-9]+|iPhone OS [0-9_]+|Version/[0-9.]+' | head -1 || true)"
   if [ -n "$MARKER" ]; then
-    if ! strings "$OUT" | grep -qF "$MARKER"; then
+    if ! grep -qF "$MARKER" "$STRINGS_FILE"; then
       echo "error: liboflux.a does not contain UA marker '$MARKER' from transport/mailru/mailru.go" >&2
       echo "source UA: $UA" >&2
+      echo "matched Mozilla lines:" >&2
+      grep -F 'Mozilla/5.0' "$STRINGS_FILE" | head -10 >&2 || true
       exit 1
     fi
     echo "==> OK: found UA marker '$MARKER' in liboflux.a"
   fi
 fi
 
-# Header is emitted next to the .a by cgo (liboflux.h or same basename).
 if [ -f "${OUT%.a}.h" ]; then
   echo "==> Header: ${OUT%.a}.h"
 elif [ -f "$OUT_DIR/liboflux.h" ]; then
