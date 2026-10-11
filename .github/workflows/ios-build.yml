@@ -74,8 +74,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
-        with:
-          submodules: recursive
 
       # The dispatch always runs the workflow from the default branch, so the
       # sources come from a snapshot ref pushed by the CLI instead.
@@ -268,91 +266,45 @@ jobs:
         with:
           go-version: 'stable'
 
-      - name: Build liboflux.a (Go core from OpenFlux-core)
+      - name: Build liboflux.a (Go core, monorepo)
         env:
           IOS_PATH: ${{ steps.params.outputs.ios_path }}
         run: |
           set -euo pipefail
-          # Core lives in submodule OpenFlux-core/ (same idea as OpenFluxAndroid's OpenFlux/).
-          # Prefer scripts/build-ios-core.sh; fall back to OpenFlux-core/build_ios.sh.
-
-          if [ ! -d OpenFlux-core/mobile ]; then
-            echo "OpenFlux-core/ missing — initializing submodule"
-            git submodule update --init --recursive OpenFlux-core || true
-          fi
-          if [ ! -d OpenFlux-core/mobile ]; then
-            echo "::error::OpenFlux-core/mobile not found. Add submodule OpenFlux-core or commit the core tree."
+          # Everything in one repo: mobile/ + transport/ at the root. No submodule.
+          if [ ! -d mobile/ios ]; then
+            echo "::error::mobile/ios not found — monorepo core missing"
             ls -la
             exit 1
           fi
-
-          echo "core module: $(grep -E '^module ' OpenFlux-core/go.mod | awk '{print $2}' || true)"
-          if [ -f OpenFlux-core/transport/mailru/mailru.go ]; then
-            echo "mailruUserAgent in OpenFlux-core:"
-            grep -n 'mailruUserAgent' OpenFlux-core/transport/mailru/mailru.go || true
+          if [ -f transport/mailru/mailru.go ]; then
+            echo "mailruUserAgent:"
+            grep -n 'mailruUserAgent' transport/mailru/mailru.go || true
           fi
 
-          if [ -f scripts/build-ios-core.sh ]; then
-            chmod +x scripts/build-ios-core.sh
-            ./scripts/build-ios-core.sh
-            LIB_DIR="$IOS_PATH/Lib"
-          elif [ -f build_ios.sh ] && [ -f OpenFlux-core/mobile/ios/packet.go ] || [ -d OpenFlux-core/mobile/ios ]; then
-            # build_ios.sh at repo root may wrap OpenFlux-core
-            if [ -x build_ios.sh ] || [ -f build_ios.sh ]; then
-              chmod +x build_ios.sh
-              ./build_ios.sh
-            fi
-            LIB_DIR="$IOS_PATH/Lib"
-          else
-            echo "==> inline build from OpenFlux-core/mobile"
-            SDK_PATH="$(xcrun --sdk iphoneos --show-sdk-path)"
-            CLANG="$(xcrun --sdk iphoneos --find clang)"
-            export GOOS=ios GOARCH=arm64 CGO_ENABLED=1
-            export CC="$CLANG -isysroot $SDK_PATH -arch arm64 -miphoneos-version-min=15.0"
-            export CGO_CFLAGS="-isysroot $SDK_PATH -arch arm64 -miphoneos-version-min=15.0"
-            export CGO_LDFLAGS="-isysroot $SDK_PATH -arch arm64 -miphoneos-version-min=15.0"
-            mkdir -p OpenFlux-core/output/ios
-            (cd OpenFlux-core/mobile && go build -a -buildmode=c-archive -tags ios \
-              -ldflags="-w" -trimpath \
-              -o ../output/ios/liboflux.a ./ios)
-            mkdir -p "$IOS_PATH/Lib"
-            cp -f OpenFlux-core/output/ios/liboflux.a "$IOS_PATH/Lib/"
-            if [ -f OpenFlux-core/output/ios/liboflux.h ]; then
-              cp -f OpenFlux-core/output/ios/liboflux.h "$IOS_PATH/Lib/"
-            elif ls OpenFlux-core/output/ios/*.h >/dev/null 2>&1; then
-              cp -f "$(ls OpenFlux-core/output/ios/*.h | head -1)" "$IOS_PATH/Lib/liboflux.h"
-            fi
-            LIB_DIR="$IOS_PATH/Lib"
+          if [ ! -f build_ios.sh ]; then
+            echo "::error::build_ios.sh not found"
+            exit 1
           fi
+          chmod +x build_ios.sh
+          ./build_ios.sh
 
-          # scripts/build-ios-core.sh already copies into ios-app/Lib; ensure IOS_PATH
-          if [ -f ios-app/Lib/liboflux.a ] && [ "$IOS_PATH" != "ios-app" ] && [ "$IOS_PATH" != "./ios-app" ]; then
-            mkdir -p "$IOS_PATH/Lib"
-            cp -f ios-app/Lib/liboflux.a "$IOS_PATH/Lib/" 2>/dev/null || true
-            cp -f ios-app/Lib/liboflux.h "$IOS_PATH/Lib/" 2>/dev/null || true
-          fi
-          mkdir -p "$IOS_PATH/Lib"
-          if [ ! -f "$IOS_PATH/Lib/liboflux.a" ]; then
-            # last resort: known output locations
-            for a in ios-app/Lib/liboflux.a OpenFlux-core/output/ios/liboflux.a output/ios/liboflux.a; do
-              if [ -f "$a" ]; then
-                cp -f "$a" "$IOS_PATH/Lib/liboflux.a"
-                hdir=$(dirname "$a")
-                [ -f "$hdir/liboflux.h" ] && cp -f "$hdir/liboflux.h" "$IOS_PATH/Lib/"
-                break
-              fi
-            done
-          fi
-          if [ ! -f "$IOS_PATH/Lib/liboflux.a" ]; then
-            echo "::error::liboflux.a not found under $IOS_PATH/Lib after core build"
-            find . -name 'liboflux.a' 2>/dev/null | head -20 || true
+          if [ ! -f output/ios/liboflux.a ]; then
+            echo "::error::output/ios/liboflux.a not produced"
             exit 1
           fi
 
-          echo "UA strings in liboflux.a (file dump, no pipefail on xcode strings):"
-          /usr/bin/strings "$IOS_PATH/Lib/liboflux.a" > /tmp/liboflux.strings.txt 2>/dev/null || true
-          grep -E 'Mozilla/5\.0|Firefox/|Chrome/|iPhone OS|Macintosh' /tmp/liboflux.strings.txt | sort -u | head -20 || true
+          mkdir -p "$IOS_PATH/Lib"
+          cp -f output/ios/liboflux.a "$IOS_PATH/Lib/"
+          if [ -f output/ios/liboflux.h ]; then
+            cp -f output/ios/liboflux.h "$IOS_PATH/Lib/"
+          elif ls output/ios/*.h >/dev/null 2>&1; then
+            cp -f "$(ls output/ios/*.h | head -1)" "$IOS_PATH/Lib/liboflux.h"
+          fi
 
+          /usr/bin/strings "$IOS_PATH/Lib/liboflux.a" > /tmp/liboflux.strings.txt 2>/dev/null || true
+          echo "UA in liboflux.a:"
+          grep -E 'Mozilla/5\.0|iPhone OS|Firefox/|Chrome/' /tmp/liboflux.strings.txt | sort -u | head -15 || true
           ls -la "$IOS_PATH/Lib/"
       - name: Generate Xcode project (XcodeGen)
         env:
