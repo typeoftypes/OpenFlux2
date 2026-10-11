@@ -1,6 +1,6 @@
 #!/bin/bash
+# Repo-root entry: sync OpenFlux-core tree, then build into ios-app/Lib.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-# Ensure local OpenFlux-core tree, then build
 bash "$ROOT/scripts/sync-openflux-core.sh"
-exec "$ROOT/scripts/build-ios-core.sh"
+bash "$ROOT/scripts/build-ios-core.sh"
