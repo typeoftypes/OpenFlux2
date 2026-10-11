@@ -26,7 +26,12 @@ import (
 	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
-const mailruUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0"
+// mailruUserAgent mimics Safari on iOS 26.6, current as of late 2026.
+// Note: Apple freezes the iOS version inside Safari's User-Agent at
+// 18_6 since iOS 26, while the Safari version reflects the real release.
+// This is intentional on Apple's side (fingerprinting mitigation), so
+// "iPhone OS 18_6" is what a real browser actually sends, not a typo.
+const mailruUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.6 Mobile/15E148 Safari/604.1"
 
 var cursorPayloadRe = regexp.MustCompile(`"cursor":"[^;]+;([^"]+)"`)
 
@@ -165,7 +170,20 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 		}
 
 		dialer := websocket.Dialer{
-			HandshakeTimeout: 15 * time.Second,
+			// Mail.ru's edge rejects the WebSocket upgrade with HTTP 409
+			// unless the request looks like a real browser handshake.
+			// Empirically, at least two independent signals satisfy it:
+			// advertising permessage-deflate (via EnableCompression, which
+			// makes gorilla/websocket send Sec-WebSocket-Extensions), and
+			// sending an Accept-Language that matches the claimed UA
+			// locale. This is a heuristic on their side, not a documented
+			// requirement, so the header set below is kept as close as
+			// possible to what a real Safari on iOS sends when opening a
+			// public cloud.mail.ru link. Compression itself is handled
+			// transparently by gorilla/websocket and does not affect the
+			// tunnel framing.
+			EnableCompression: true,
+			HandshakeTimeout:  15 * time.Second,
 			NetDialContext: (&net.Dialer{
 				Timeout:   10 * time.Second,
 				KeepAlive: 30 * time.Second,
@@ -173,7 +191,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 		}
 		headers := http.Header{}
 		headers.Set("User-Agent", mailruUserAgent)
-		headers.Set("Origin", "https://docs.datacloudmail.ru")
+		headers.Set("Origin", "https://cloud.mail.ru")
 		headers.Set("Accept", "*/*")
 		headers.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
 		headers.Set("Cache-Control", "no-cache")
@@ -190,8 +208,11 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 				}
 			}
 			utils.Debugf("[M-DOCS] WebSocket dial failed (http %d): %v", status, err)
-			// 409 = conflict / session already claimed for this identity.
-			// Drop the cached userID so the next attempt joins as a fresh peer.
+			// 409 has two known causes on Mail.ru's edge: the browser-
+			// heuristics rejection described above (which the headers
+			// should now avoid), and a genuine session conflict for the
+			// current identity. Rotate the editor userID and back off
+			// longer than a plain network flap to cover the latter.
 			if status == 409 {
 				t.Mu.Lock()
 				if t.session != nil {
