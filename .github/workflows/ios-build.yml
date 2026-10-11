@@ -289,8 +289,15 @@ jobs:
           chmod +x build_ios.sh
           ./build_ios.sh
 
-          if [ ! -f output/ios/liboflux.a ]; then
-            echo "::error::output/ios/liboflux.a not produced"
+          # Accept either monorepo paths
+          if [ ! -f output/ios/liboflux.a ] && [ -f ios-app/Lib/liboflux.a ]; then
+            mkdir -p output/ios
+            cp -f ios-app/Lib/liboflux.a output/ios/
+            [ -f ios-app/Lib/liboflux.h ] && cp -f ios-app/Lib/liboflux.h output/ios/
+          fi
+          if [ ! -f output/ios/liboflux.a ] && [ ! -f ios-app/Lib/liboflux.a ]; then
+            echo "::error::liboflux.a not produced (checked output/ios and ios-app/Lib)"
+            find . -name 'liboflux.a' 2>/dev/null | head -20 || true
             exit 1
           fi
 
