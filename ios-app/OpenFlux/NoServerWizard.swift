@@ -714,10 +714,11 @@ struct NoServerWizardView: View {
                         if model.unsaved { confirmClose = true } else { close() }
                     }
                 }
-                if model.step == .channel || (model.step == .install && model.installedToken == nil) {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("Назад") { model.back() }.disabled(model.busy != nil)
-                    }
+                // Always present ToolbarItem (iOS 15): optional ToolbarContent needs iOS 16+.
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Назад") { model.back() }
+                        .disabled(model.busy != nil || !(model.step == .channel || (model.step == .install && model.installedToken == nil)))
+                        .opacity(model.step == .channel || (model.step == .install && model.installedToken == nil) ? 1 : 0)
                 }
             }
             .alert("Нода на хостинге, но профиль не сохранён", isPresented: $confirmClose) {
