@@ -1,5 +1,8 @@
 // Package mailru implements a transport that tunnels packets through
-// Mail.ru's cloud document editor (docs.datacloudmail.ru).
+// Mail.ru's cloud document editor (docs.datacloudmail.ru), the same
+// coauthoring backend family as Yandex.Docs. Two peers open the same
+// public document and smuggle packets through the "cursor" field of the
+// collaborative editing protocol.
 package mailru
 
 import (
@@ -21,16 +24,37 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/typeoftypes/OpenFlux2/netbind"
 	"github.com/typeoftypes/OpenFlux2/transport"
 	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
-// Safari on iPhone — must stay consistent with platform / Origin / Referer below.
-const mailruUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.6 Mobile/15E148 Safari/604.1"
+// Список User-Agent'ов, которые пробуем по кругу при 409 / ошибке handshake.
+// Firefox чаще всего проходит, остальные — запасные варианты с разных платформ.
+var mailruUserAgents = []string{
+	// Firefox Windows (основной, лучше всего проходит 409)
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0",
+	// Firefox macOS
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:155.0) Gecko/20100101 Firefox/155.0",
+	// Chrome Windows
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+	// Chrome macOS
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+	// Safari macOS
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15",
+	// Edge Windows
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0",
+	// iPhone Safari (на случай, если edge любит мобильный)
+	"Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1",
+	// Android Chrome
+	"Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36",
+}
 
 var cursorPayloadRe = regexp.MustCompile(`"cursor":"[^;]+;([^"]+)"`)
 
-var mailruAPIURL = "https://cloud.mail.ru/api/v4/r7/edit"
+// saveChangesMessageTemplate — шаблон saveChanges-сообщения в формате
+// веб-клиента Mail.ru.
+const saveChangesMessageTemplate = `42["message",{"type":"saveChanges","changes":"[\"76;AgAAADEA//8BAOwbfF7pEAAALQEAAAMAAAAAAAAAAAAAAAAAAAAAAAAA9v///xoAAAAyADAAMgA2AC4AMgAuADEALgAyADIANgA4AA==\",\"35;BgAAADYAMgA3AAEAHAABAAAAAAAAAAEAAABhAAAAAAMAAAA=\",\"35;BgAAADYAMgA3AAEAHAABAAAAAQAAAAEAAABzAAAAAAMAAAA=\",\"35;BgAAADYAMgA3AAEAHAABAAAAAgAAAAEAAABkAAAAAAMAAAA=\"]","startSaveChanges":true,"endSaveChanges":true,"isCoAuthoring":false,"isExcel":false,"deleteIndex":null,"excelAdditionalInfo":"{\"UserId\":\"%s\",\"UserShortId\":\"%s\",\"CursorInfo\":\"14;BgAAADYAMgA3AAMAAAA=\"}","unlock":false,"releaseLocks":false}]`
 
 type MailruDocsInfo struct {
 	Token        string
@@ -58,7 +82,70 @@ func (s *DocSession) safeWrite(messageType int, data []byte) error {
 	if s.Conn == nil {
 		return fmt.Errorf("no conn")
 	}
+	_ = s.Conn.SetWriteDeadline(time.Now().Add(docWriteTimeout))
 	return s.Conn.WriteMessage(messageType, data)
+}
+
+const docWriteTimeout = 20 * time.Second
+const mailruSocketIOHandshakeTimeout = 15 * time.Second
+
+// waitMailruSocketIO completes the Engine.IO / Socket.IO handshake before
+// editor authentication is sent.
+func waitMailruSocketIO(session *DocSession, token string) error {
+	if session == nil || session.Conn == nil {
+		return fmt.Errorf("mailru: websocket session is nil")
+	}
+	conn := session.Conn
+
+	if err := conn.SetReadDeadline(time.Now().Add(mailruSocketIOHandshakeTimeout)); err != nil {
+		return fmt.Errorf("mailru: set handshake deadline: %w", err)
+	}
+	defer conn.SetReadDeadline(time.Time{})
+
+	waitFor := func(match func(string) bool) error {
+		for {
+			messageType, payload, err := conn.ReadMessage()
+			if err != nil {
+				return err
+			}
+			if messageType != websocket.TextMessage {
+				continue
+			}
+			text := string(payload)
+			if text == "2" {
+				if err := session.safeWrite(websocket.TextMessage, []byte("3")); err != nil {
+					return fmt.Errorf("mailru: send Engine.IO pong: %w", err)
+				}
+				continue
+			}
+			if match(text) {
+				return nil
+			}
+			utils.Debugf("[M-DOCS] handshake: ignoring server frame %q", text)
+		}
+	}
+
+	// Engine.IO open: 0{"sid":"..."}
+	if err := waitFor(func(text string) bool {
+		return strings.HasPrefix(text, "0{")
+	}); err != nil {
+		return fmt.Errorf("mailru: wait for Engine.IO open: %w", err)
+	}
+	utils.Debugf("[M-DOCS] Engine.IO open")
+
+	socketConnect := fmt.Sprintf(`40{"token":"%s"}`, token)
+	if err := session.safeWrite(websocket.TextMessage, []byte(socketConnect)); err != nil {
+		return fmt.Errorf("mailru: send Socket.IO connect: %w", err)
+	}
+
+	// Socket.IO acknowledgement: 40{"sid":"..."}
+	if err := waitFor(func(text string) bool {
+		return strings.HasPrefix(text, "40")
+	}); err != nil {
+		return fmt.Errorf("mailru: wait for Socket.IO connect: %w", err)
+	}
+	utils.Debugf("[M-DOCS] Socket.IO connected")
+	return nil
 }
 
 type MailruDocsTransport struct {
@@ -68,8 +155,11 @@ type MailruDocsTransport struct {
 	session     *DocSession
 	userCounter atomic.Int32
 	baseUserID  string
-	jar         http.CookieJar
-	jarOnce     sync.Once
+	cookieJar   *cookiejar.Jar
+	jarMu       sync.RWMutex
+
+	// uaIndex — текущий индекс в mailruUserAgents (ротация при неудаче)
+	uaIndex atomic.Uint32
 }
 
 func NewMailruDocsTransport(weblink string, config transport.TransportConfig) *MailruDocsTransport {
@@ -78,15 +168,23 @@ func NewMailruDocsTransport(weblink string, config transport.TransportConfig) *M
 		weblink:       normalizeWeblink(weblink),
 	}
 	t.baseUserID = randUserID()
+	jar, _ := cookiejar.New(nil)
+	t.cookieJar = jar
+	// Начинаем со случайного UA, чтобы разные инстансы не били в один и тот же.
+	t.uaIndex.Store(uint32(rand.Intn(len(mailruUserAgents))))
 	return t
 }
 
-func (t *MailruDocsTransport) cookieJar() http.CookieJar {
-	t.jarOnce.Do(func() {
-		j, _ := cookiejar.New(nil)
-		t.jar = j
-	})
-	return t.jar
+func (t *MailruDocsTransport) currentUA() string {
+	idx := t.uaIndex.Load() % uint32(len(mailruUserAgents))
+	return mailruUserAgents[idx]
+}
+
+func (t *MailruDocsTransport) rotateUA() string {
+	next := t.uaIndex.Add(1)
+	ua := mailruUserAgents[next%uint32(len(mailruUserAgents))]
+	utils.Debugf("[M-DOCS] rotated User-Agent → %s", truncate(ua, 60))
+	return ua
 }
 
 func normalizeWeblink(weblink string) string {
@@ -110,7 +208,8 @@ func (t *MailruDocsTransport) Start() error {
 	}
 	t.baseUserID = randUserID()
 	utils.SafeGo("mailru.keepAlive", t.keepAliveLoop)
-	utils.Debugf("[M-DOCS] start weblink=%s UA=%s", t.weblink, mailruUserAgent)
+	utils.SafeGo("mailru.editorActivity", t.editorActivityLoop)
+	utils.Debugf("[M-DOCS] start weblink=%s UA=%s", t.weblink, truncate(t.currentUA(), 60))
 	t.connectToDoc(0)
 	return nil
 }
@@ -138,7 +237,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 	if !t.IsRunning() {
 		return
 	}
-	utils.Debugf("[M-DOCS] connectToDoc attempt %d", attempt)
+	utils.Debugf("[M-DOCS] connectToDoc attempt %d ua=%s", attempt, truncate(t.currentUA(), 50))
 
 	go func() {
 		defer func() {
@@ -159,36 +258,37 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 			userID = t.baseUserID + suffix
 		}
 
-		info, err := t.fetchDocInfo(t.weblink)
+		ua := t.currentUA()
+
+		info, err := t.fetchDocInfo(t.weblink, ua)
 		if err != nil {
 			utils.Debugf("[M-DOCS] fetchDocInfo failed: %v", err)
+			if utils.Throttled("m-docs.fetch", time.Minute) {
+				utils.Infof("[M-DOCS] cannot open the document: %v; retrying", err)
+			}
+			// При ошибке API тоже ротируем UA
+			t.rotateUA()
 			t.scheduleReconnect(attempt)
 			return
 		}
 
 		dialer := websocket.Dialer{
-			// Mail.ru edge often answers 409 unless the upgrade looks like a
-			// real browser (permessage-deflate + Accept-Language + cookies).
+			// Mail.ru's nginx answers 409 Conflict without permessage-deflate.
 			EnableCompression: true,
-			HandshakeTimeout:  20 * time.Second,
-			Jar:               t.cookieJar(),
-			NetDialContext: (&net.Dialer{
-				Timeout:   12 * time.Second,
+			HandshakeTimeout:  15 * time.Second,
+			Jar:               t.getJar(),
+			NetDialContext: netbind.Wrap(&net.Dialer{
+				Timeout:   10 * time.Second,
 				KeepAlive: 30 * time.Second,
 			}).DialContext,
 		}
 
 		headers := http.Header{}
-		headers.Set("User-Agent", mailruUserAgent)
-		// Public docs open from cloud.mail.ru; docs.datacloudmail.ru is the WS host.
-		headers.Set("Origin", "https://cloud.mail.ru")
-		headers.Set("Accept", "*/*")
-		headers.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+		headers.Set("User-Agent", ua)
+		headers.Set("Accept-Language", "en-US,en;q=0.9,ru;q=0.8")
+		headers.Set("Origin", "https://docs.datacloudmail.ru")
 		headers.Set("Cache-Control", "no-cache")
 		headers.Set("Pragma", "no-cache")
-		headers.Set("Sec-Fetch-Dest", "websocket")
-		headers.Set("Sec-Fetch-Mode", "websocket")
-		headers.Set("Sec-Fetch-Site", "cross-site")
 
 		utils.Debugf("[M-DOCS] WebSocket dial %s", info.WsURL)
 		conn, resp, err := dialer.Dial(info.WsURL, headers)
@@ -201,35 +301,47 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 				}
 			}
 			utils.Debugf("[M-DOCS] WebSocket dial failed (http %d): %v", status, err)
+
+			// При любой ошибке dial (особенно 409) — меняем UA + userID + jar
+			t.Mu.Lock()
+			if t.session != nil {
+				t.session.UserID = ""
+			}
+			t.Mu.Unlock()
+			t.baseUserID = randUserID()
+			t.rotateJar()
+			t.rotateUA()
+
 			if status == 409 {
-				t.Mu.Lock()
-				if t.session != nil {
-					t.session.UserID = ""
-				}
-				t.Mu.Unlock()
-				t.baseUserID = randUserID()
-				// Fresh cookie jar — edge may have bound the old identity.
-				t.jarOnce = sync.Once{}
-				t.jar = nil
-				utils.Debugf("[M-DOCS] HTTP 409 — rotated editor userID + cookie jar, backoff")
-				t.scheduleReconnect(attempt + 2)
+				utils.Debugf("[M-DOCS] HTTP 409 — rotated UA + editor userID + cookie jar")
+				t.scheduleReconnect(attempt + 1)
 				return
 			}
 			t.scheduleReconnect(attempt)
 			return
 		}
-		utils.Debugf("[M-DOCS] WebSocket connected")
+		utils.Debugf("[M-DOCS] WebSocket connected (ua=%s)", truncate(ua, 40))
 
 		writeQueue := make(chan []byte, t.GetConfig().MaxQueueSize)
 		if existingSession != nil {
 			writeQueue = existingSession.WriteQueue
 		}
+
 		session := &DocSession{
 			Info:       info,
 			Conn:       conn,
 			WriteQueue: writeQueue,
 			UserID:     userID,
 		}
+
+		if err := waitMailruSocketIO(session, info.Token); err != nil {
+			utils.Debugf("[M-DOCS] Socket.IO handshake failed: %v", err)
+			_ = conn.Close()
+			t.rotateUA()
+			t.scheduleReconnect(attempt)
+			return
+		}
+
 		t.Mu.Lock()
 		t.session = session
 		t.SetConnected(true)
@@ -238,27 +350,6 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 		if existingSession == nil {
 			utils.SafeGo("mailru.writer", t.writerLoop)
 		}
-
-		// Engine.IO / Socket.IO: wait briefly for open frames, then auth.
-		_ = conn.SetReadDeadline(time.Now().Add(8 * time.Second))
-		for i := 0; i < 6; i++ {
-			_, msg, rerr := conn.ReadMessage()
-			if rerr != nil {
-				break
-			}
-			text := string(msg)
-			utils.Debugf("[M-DOCS] handshake frame: %s", truncate(text, 80))
-			if strings.HasPrefix(text, "0") || text == "40" || strings.HasPrefix(text, "40") {
-				break
-			}
-			if text == "2" {
-				_ = session.safeWrite(websocket.TextMessage, []byte("3"))
-			}
-		}
-		_ = conn.SetReadDeadline(time.Time{})
-
-		auth1 := fmt.Sprintf(`40{"token":"%s"}`, info.Token)
-		_ = session.safeWrite(websocket.TextMessage, []byte(auth1))
 
 		authMsg := map[string]interface{}{
 			"type":                "auth",
@@ -305,10 +396,17 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 			_, message, err := conn.ReadMessage()
 			if err != nil {
 				utils.Debugf("[M-DOCS] Read error: %v", err)
+				if utils.Throttled("m-docs.drop", time.Minute) {
+					utils.Infof("[M-DOCS] connection to the document dropped: %v; reconnecting", err)
+				}
 				t.SetConnected(false)
 				_ = conn.Close()
+
+				// При дропе соединения тоже пробуем следующий UA
+				t.rotateUA()
+
 				next := attempt
-				if time.Since(connectedAt) > 45*time.Second {
+				if time.Since(connectedAt) > 15*time.Second {
 					next = -1
 				}
 				t.scheduleReconnect(next)
@@ -374,9 +472,9 @@ func (t *MailruDocsTransport) keepAliveLoop() {
 	keepAliveMsg := `42["message",{"type":"cursor","cursor":"18;---KA---"}]`
 	for t.IsRunning() {
 		<-ticker.C
-		t.Mu.Lock()
+		t.Mu.RLock()
 		session := t.session
-		t.Mu.Unlock()
+		t.Mu.RUnlock()
 		if session != nil && session.Conn != nil {
 			if err := session.safeWrite(websocket.TextMessage, []byte(keepAliveMsg)); err != nil {
 				utils.Debugf("[M-DOCS] Keep-alive failed: %v", err)
@@ -384,6 +482,32 @@ func (t *MailruDocsTransport) keepAliveLoop() {
 			}
 		}
 	}
+}
+
+// editorActivityLoop periodically sends saveChanges so the document stays "alive".
+func (t *MailruDocsTransport) editorActivityLoop() {
+	for t.IsRunning() {
+		delay := 25*time.Second + time.Duration(rand.Int63n(int64(20*time.Second)))
+		time.Sleep(delay)
+		t.Mu.RLock()
+		session := t.session
+		t.Mu.RUnlock()
+		if session == nil || session.Conn == nil {
+			continue
+		}
+		msg := t.buildSaveChanges(session.UserID)
+		if err := session.safeWrite(websocket.TextMessage, msg); err != nil {
+			utils.Debugf("[M-DOCS] saveChanges write error: %v", err)
+		}
+	}
+}
+
+func (t *MailruDocsTransport) buildSaveChanges(userID string) []byte {
+	short := userID
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	return []byte(fmt.Sprintf(saveChangesMessageTemplate, userID, short))
 }
 
 func (t *MailruDocsTransport) handleMessage(session *DocSession, data []byte) {
@@ -451,74 +575,56 @@ func reconnectBackoff(n int) time.Duration {
 		shift = 5
 	}
 	d := 500 * time.Millisecond * time.Duration(1<<uint(shift))
-	if d > 6*time.Second {
-		d = 6 * time.Second
+	if d > 15*time.Second {
+		d = 15 * time.Second
 	}
 	d += time.Duration(rand.Int63n(int64(d/2) + 1))
 	return d
 }
 
-func (t *MailruDocsTransport) fetchDocInfo(weblink string) (MailruDocsInfo, error) {
-	client := &http.Client{
-		Timeout: 20 * time.Second,
-		Jar:     t.cookieJar(),
-	}
-	// Match mobile Safari fingerprint: API used to be desktop_web only; with an
-	// iPhone UA, mobileweb reduces edge 409 on the subsequent WS upgrade.
-	reqBody := map[string]string{
-		"x-email":  "anonym",
-		"public":   "/" + weblink,
-		"platform": "mobileweb",
-	}
-	jsonData, _ := json.Marshal(reqBody)
-	utils.Debugf("[M-DOCS] fetchDocInfo POST %s platform=mobileweb", mailruAPIURL)
-
-	req, err := http.NewRequest("POST", mailruAPIURL, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return MailruDocsInfo{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/plain, */*")
-	req.Header.Set("User-Agent", mailruUserAgent)
-	req.Header.Set("X-Api-Version", "4")
-	req.Header.Set("Origin", "https://cloud.mail.ru")
-	req.Header.Set("Referer", fmt.Sprintf("https://cloud.mail.ru/public/%s", weblink))
-	req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
-	req.Header.Set("Sec-Fetch-Site", "same-origin")
-	req.Header.Set("Sec-Fetch-Mode", "cors")
-	req.Header.Set("Sec-Fetch-Dest", "empty")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return MailruDocsInfo{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		// Fallback once with desktop_web if mobileweb is rejected.
-		if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusForbidden {
-			return t.fetchDocInfoDesktop(weblink)
-		}
-		return MailruDocsInfo{}, fmt.Errorf("API returned status %d", resp.StatusCode)
-	}
-	return parseDocInfo(resp.Body)
+func (t *MailruDocsTransport) getJar() http.CookieJar {
+	t.jarMu.RLock()
+	defer t.jarMu.RUnlock()
+	return t.cookieJar
 }
 
-func (t *MailruDocsTransport) fetchDocInfoDesktop(weblink string) (MailruDocsInfo, error) {
-	client := &http.Client{Timeout: 20 * time.Second, Jar: t.cookieJar()}
+func (t *MailruDocsTransport) rotateJar() {
+	jar, _ := cookiejar.New(nil)
+	t.jarMu.Lock()
+	t.cookieJar = jar
+	t.jarMu.Unlock()
+}
+
+func (t *MailruDocsTransport) fetchDocInfo(weblink, ua string) (MailruDocsInfo, error) {
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		Jar:     t.getJar(),
+	}
 	reqBody := map[string]string{
 		"x-email":  "anonym",
 		"public":   "/" + weblink,
 		"platform": "desktop_web",
 	}
 	jsonData, _ := json.Marshal(reqBody)
-	utils.Debugf("[M-DOCS] fetchDocInfo fallback platform=desktop_web")
-	req, _ := http.NewRequest("POST", mailruAPIURL, bytes.NewBuffer(jsonData))
+
+	apiURL := "https://cloud.mail.ru/api/v4/r7/edit"
+	utils.Debugf("[M-DOCS] fetchDocInfo POST %s ua=%s", apiURL, truncate(ua, 40))
+
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return MailruDocsInfo{}, err
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
-	req.Header.Set("User-Agent", mailruUserAgent)
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9,ru;q=0.8")
+	req.Header.Set("User-Agent", ua)
 	req.Header.Set("X-Api-Version", "4")
 	req.Header.Set("Origin", "https://cloud.mail.ru")
 	req.Header.Set("Referer", fmt.Sprintf("https://cloud.mail.ru/public/%s", weblink))
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.Header.Set("Sec-Fetch-Mode", "cors")
+	req.Header.Set("Sec-Fetch-Dest", "empty")
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return MailruDocsInfo{}, err
@@ -560,7 +666,7 @@ func parseDocInfo(r io.Reader) (MailruDocsInfo, error) {
 	if userObj != nil {
 		editorUserID, _ = userObj["id"].(string)
 	}
-	wsBase := wsBaseFrom(apiBase)
+	wsBase := strings.Replace(apiBase, "https://", "wss://", 1)
 	wsURL := fmt.Sprintf("%s/doc/%s/c/?EIO=4&transport=websocket", wsBase, docKey)
 	return MailruDocsInfo{
 		Token: token, DocKey: docKey, WsURL: wsURL, FileType: fileType,
@@ -569,19 +675,58 @@ func parseDocInfo(r io.Reader) (MailruDocsInfo, error) {
 	}, nil
 }
 
-func wsBaseFrom(apiBase string) string {
-	switch {
-	case strings.HasPrefix(apiBase, "https://"):
-		return "wss://" + strings.TrimPrefix(apiBase, "https://")
-	case strings.HasPrefix(apiBase, "http://"):
-		return "ws://" + strings.TrimPrefix(apiBase, "http://")
-	}
-	return apiBase
-}
-
 func randUserID() string {
 	return fmt.Sprintf("%010d", rand.New(rand.NewSource(time.Now().UnixNano())).Intn(1000000000))
 }
 
-// silence unused import if url only needed for jar cookies edge cases
-var _ = url.URL{}
+// ---- CookieExchanger ----
+
+func (t *MailruDocsTransport) FetchCookies() (map[string]string, error) {
+	t.jarMu.RLock()
+	jar := t.cookieJar
+	t.jarMu.RUnlock()
+	if jar == nil {
+		return nil, fmt.Errorf("mailru: cookie jar is nil")
+	}
+	u, err := url.Parse("https://cloud.mail.ru/")
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string)
+	for _, c := range jar.Cookies(u) {
+		out[c.Name] = c.Value
+	}
+	return out, nil
+}
+
+func (t *MailruDocsTransport) ApplyCookies(values map[string]string) error {
+	if len(values) == 0 {
+		return nil
+	}
+	u, _ := url.Parse("https://cloud.mail.ru/")
+	jar, _ := cookiejar.New(nil)
+	cookies := make([]*http.Cookie, 0, len(values))
+	for k, v := range values {
+		cookies = append(cookies, &http.Cookie{Name: k, Value: v, Path: "/"})
+	}
+	jar.SetCookies(u, cookies)
+
+	t.jarMu.Lock()
+	t.cookieJar = jar
+	t.jarMu.Unlock()
+
+	utils.Debugf("[M-DOCS] applied %d cookies, forcing reconnect", len(cookies))
+
+	t.Mu.Lock()
+	session := t.session
+	t.session = nil
+	t.SetConnected(false)
+	t.Mu.Unlock()
+	if session != nil && session.Conn != nil {
+		_ = session.Conn.Close()
+	}
+	if t.IsRunning() {
+		t.scheduleReconnect(0)
+	}
+	return nil
+}
