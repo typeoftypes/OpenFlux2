@@ -24,9 +24,9 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/p1neappleXpress/OpenFlux/netbind"
-	"github.com/p1neappleXpress/OpenFlux/transport"
-	"github.com/p1neappleXpress/OpenFlux/utils"
+	"github.com/typeoftypes/OpenFlux2/netbind"
+	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
 // Mail.ru rejects the old Chrome/137 UA on the WebSocket upgrade with HTTP 409
