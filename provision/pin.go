@@ -6,7 +6,7 @@ package provision
 // changes, commit it, then point PinnedCommit at that commit.
 const (
 	PinnedRepo   = "typeoftypes/OpenFlux2"
-	PinnedCommit = "3459bfdf73be83b1128865de8737deb009ce0e7e"
+	PinnedCommit = "3a9af74b6bd90be707ece7d2b4f27b35f8db1253"
 	PinnedSHA256 = "8a75cfd72a642a464d8d2e871172bcf37b1241d0d37e9323568557d3033f250f"
 )
 
