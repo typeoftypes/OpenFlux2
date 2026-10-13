@@ -702,6 +702,7 @@ func (t *MailruDocsTransport) fetchDocInfo(weblink string) (MailruDocsInfo, erro
 		editorUserID, _ = userObj["id"].(string)
 	}
 
+	// Always WSS — some API responses still advertise http:// bases.
 	wsBase := forceWSS(apiBase)
 	wsURL := fmt.Sprintf("%s/doc/%s/c/?EIO=4&transport=websocket", wsBase, docKey)
 
@@ -778,7 +779,7 @@ func (t *MailruDocsTransport) ApplyCookies(values map[string]string) error {
 	return nil
 }
 
-// forceWSS maps http/https/ws API bases to wss:// (docs.datacloudmail.ru requires TLS).
+// forceWSS maps http/https/ws API bases to wss://.
 func forceWSS(apiBase string) string {
 	apiBase = strings.TrimSpace(apiBase)
 	switch {
