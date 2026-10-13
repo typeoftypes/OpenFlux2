@@ -22,7 +22,6 @@ import (
 
 	"github.com/typeoftypes/OpenFlux2/netbind"
 	"github.com/typeoftypes/OpenFlux2/transport"
-	"github.com/typeoftypes/OpenFlux2/transport/stealth"
 	"github.com/typeoftypes/OpenFlux2/utils"
 )
 

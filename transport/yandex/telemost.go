@@ -35,7 +35,6 @@ import (
 	"github.com/pion/webrtc/v4"
 
 	"github.com/typeoftypes/OpenFlux2/transport"
-	"github.com/typeoftypes/OpenFlux2/transport/stealth"
 	"github.com/typeoftypes/OpenFlux2/utils"
 )
 

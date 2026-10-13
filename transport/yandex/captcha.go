@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/typeoftypes/OpenFlux2/transport/stealth"
 	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
