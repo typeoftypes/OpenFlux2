@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/typeoftypes/OpenFlux2/transport"
-	"github.com/typeoftypes/OpenFlux2/transport/registry"
-	"github.com/typeoftypes/OpenFlux2/utils"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport/registry"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 var client = packetClient{}

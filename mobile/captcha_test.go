@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport"
 )
 
 type fakeCaptchaTransport struct {

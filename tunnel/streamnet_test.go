@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/net/dns/dnsmessage"
 
-	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport"
 )
 
 // deviceLink lets a client-side TCPTunnel stand in for the phone or the TUN

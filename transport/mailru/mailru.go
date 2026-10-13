@@ -24,27 +24,15 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/typeoftypes/OpenFlux2/netbind"
-	"github.com/typeoftypes/OpenFlux2/transport"
-	"github.com/typeoftypes/OpenFlux2/transport/stealth"
-	"github.com/typeoftypes/OpenFlux2/utils"
+	"github.com/p1neappleXpress/OpenFlux/netbind"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // Mail.ru rejects the old Chrome/137 UA on the WebSocket upgrade with HTTP 409
 // on some edge nodes; a current Firefox UA is accepted for both the API and the
 // WebSocket. Reported by @Shiller70 (issue #164).
-// defaultMailruUA is the fallback; live dials use a per-session stealth profile.
-const defaultMailruUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.6 Mobile/15E148 Safari/604.1"
-
-// sessionProfile is chosen once per transport start so API + WS share one identity.
-var mailruProfile = stealth.PreferMobile()
-
-func mailruUA() string {
-	if mailruProfile.UserAgent != "" {
-		return mailruProfile.UserAgent
-	}
-	return defaultMailruUA
-}
+const mailruUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0"
 
 var cursorPayloadRe = regexp.MustCompile(`"cursor":"[^;]+;([^"]+)"`)
 
@@ -298,7 +286,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 			}).DialContext,
 		}
 		headers := http.Header{}
-		stealth.ApplyWebSocketHeaders(headers, mailruProfile, "https://cloud.mail.ru")
+		headers.Set("User-Agent", mailruUserAgent)
 		// Some Mail.ru edge nodes still answer 409 to the upgrade when the
 		// request looks less like a browser than the others; a real browser
 		// always sends Accept-Language. Reported to still hit iOS (#164).
@@ -664,7 +652,7 @@ func (t *MailruDocsTransport) fetchDocInfo(weblink string) (MailruDocsInfo, erro
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	stealth.ApplyBrowserHeaders(req.Header, mailruProfile, "https://cloud.mail.ru", req.Header.Get("Referer"))
+	req.Header.Set("User-Agent", mailruUserAgent)
 	req.Header.Set("X-Api-Version", "4")
 	req.Header.Set("Referer", fmt.Sprintf("https://cloud.mail.ru/public/%s?weblink=%s", weblink, weblink))
 

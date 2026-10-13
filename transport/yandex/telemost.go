@@ -34,8 +34,8 @@ import (
 	"github.com/pion/sdp/v3"
 	"github.com/pion/webrtc/v4"
 
-	"github.com/typeoftypes/OpenFlux2/transport"
-	"github.com/typeoftypes/OpenFlux2/utils"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 var (
@@ -55,7 +55,7 @@ func init() {
 	}
 }
 
-const telemostUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+const telemostUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36"
 
 func roleStr(isExitNode bool) string {
 	if isExitNode {

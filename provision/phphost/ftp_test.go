@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	bundle "github.com/typeoftypes/OpenFlux2/deploy/phpbox"
+	bundle "github.com/p1neappleXpress/OpenFlux/deploy/phpbox"
 )
 
 func ctx(t *testing.T) context.Context {

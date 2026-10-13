@@ -20,8 +20,8 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
 	"gvisor.dev/gvisor/pkg/waiter"
 
-	"github.com/typeoftypes/OpenFlux2/network"
-	"github.com/typeoftypes/OpenFlux2/utils"
+	"github.com/p1neappleXpress/OpenFlux/network"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // TCPDialer originates a TCP connection to address ("host:port") through some

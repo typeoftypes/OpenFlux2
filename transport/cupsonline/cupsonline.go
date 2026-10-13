@@ -20,9 +20,9 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/typeoftypes/OpenFlux2/netbind"
-	"github.com/typeoftypes/OpenFlux2/transport"
-	"github.com/typeoftypes/OpenFlux2/utils"
+	"github.com/p1neappleXpress/OpenFlux/netbind"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // baseRoomURL is where the rooms live. It's a variable only so tests can aim
@@ -38,7 +38,7 @@ func SetBaseRoomURL(u string) (restore func()) {
 	return func() { baseRoomURL = old }
 }
 
-const cupsUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+const cupsUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
 
 type CupsonlineConfig struct {
 	WSHandshakeTimeout  time.Duration

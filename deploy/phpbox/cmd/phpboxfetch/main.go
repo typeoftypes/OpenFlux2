@@ -27,7 +27,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/typeoftypes/OpenFlux2/transport/phpbox"
+	"github.com/p1neappleXpress/OpenFlux/transport/phpbox"
 )
 
 func main() {

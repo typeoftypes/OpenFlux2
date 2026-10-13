@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/typeoftypes/OpenFlux2/transport"
-	"github.com/typeoftypes/OpenFlux2/transport/script"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport/script"
 )
 
 func signed(t *testing.T, src string) (string, ed25519.PublicKey) {

@@ -7,8 +7,8 @@ import (
 	"net"
 	"sort"
 
-	"github.com/typeoftypes/OpenFlux2/share"
-	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/p1neappleXpress/OpenFlux/share"
+	"github.com/p1neappleXpress/OpenFlux/transport"
 )
 
 // ShareQRPNG renders link as a size x size QR code PNG for the app to show.

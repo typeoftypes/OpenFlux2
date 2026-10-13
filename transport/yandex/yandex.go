@@ -18,8 +18,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/typeoftypes/OpenFlux2/transport"
-	"github.com/typeoftypes/OpenFlux2/utils"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // ErrCaptchaRequired signals that the transport hit a SmartCaptcha challenge
@@ -761,7 +761,7 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 		Timeout: 15 * time.Second,
 	}
 
-	ua := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:144.0) Gecko/20100101 Firefox/144.0"
+	ua := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:153.0) Gecko/20100101 Firefox/153.0"
 
 	// Явно следуем по редиректам: до 10 хопов.
 	currentURL := url

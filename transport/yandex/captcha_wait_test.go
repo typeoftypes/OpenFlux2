@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport"
 )
 
 // captchaDoc serves a document that always redirects to SmartCaptcha and

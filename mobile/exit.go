@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/typeoftypes/OpenFlux2/share"
-	"github.com/typeoftypes/OpenFlux2/transport"
-	"github.com/typeoftypes/OpenFlux2/tunnel"
-	"github.com/typeoftypes/OpenFlux2/utils"
+	"github.com/p1neappleXpress/OpenFlux/share"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/tunnel"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // Exit mode: the phone runs an l4 exit node, like the CLI's --role=exit

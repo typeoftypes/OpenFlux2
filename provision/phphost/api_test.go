@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/typeoftypes/OpenFlux2/share"
+	"github.com/p1neappleXpress/OpenFlux/share"
 )
 
 func call(t *testing.T, method string, params interface{}, progress func(Progress)) Result {

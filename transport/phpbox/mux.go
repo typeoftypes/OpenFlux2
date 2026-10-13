@@ -13,8 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/typeoftypes/OpenFlux2/network"
-	"github.com/typeoftypes/OpenFlux2/utils"
+	"github.com/p1neappleXpress/OpenFlux/network"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // Carrier is a bidirectional byte-stream link the mux rides on. Its shape is

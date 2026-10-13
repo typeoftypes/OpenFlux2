@@ -14,9 +14,9 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/tun"
 
-	"github.com/typeoftypes/OpenFlux2/netbind"
-	"github.com/typeoftypes/OpenFlux2/transport"
-	"github.com/typeoftypes/OpenFlux2/utils"
+	"github.com/p1neappleXpress/OpenFlux/netbind"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // The Windows full tunnel: a Wintun adapter takes the default route and

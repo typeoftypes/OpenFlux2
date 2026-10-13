@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"time"
-
-	"github.com/typeoftypes/OpenFlux2/transport/stealth"
 )
 
 // Client is a Mux over the direct-HTTP two-channel carrier - for a phpbox
@@ -35,7 +33,6 @@ func NewClient(endpoint, token, session string) *Client {
 // stream responses.
 type httpCarrier struct {
 	endpoint, token, session string
-	profile                  stealth.Profile
 	http                     *http.Client
 
 	ctx      context.Context
@@ -51,7 +48,6 @@ func newHTTPCarrier(endpoint, token, session string) *httpCarrier {
 		endpoint: endpoint,
 		token:    token,
 		session:  session,
-		profile:  stealth.PreferDesktop(),
 		http:     &http.Client{Timeout: 0}, // the down-poll is long-lived
 		ctx:      ctx,
 		cancel:   cancel,
@@ -96,9 +92,7 @@ func (h *httpCarrier) upLoop() {
 		}
 		req, err := http.NewRequestWithContext(h.ctx, http.MethodPost, h.url("up"), bytes.NewReader(buf))
 		if err == nil {
-			stealth.ApplyBrowserHeaders(req.Header, h.profile, "", "")
 			req.Header.Set("Content-Type", "application/octet-stream")
-			req.Header.Set("Accept", "application/octet-stream, */*")
 			if resp, err := h.http.Do(req); err == nil {
 				io.Copy(io.Discard, resp.Body)
 				resp.Body.Close()

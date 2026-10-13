@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/typeoftypes/OpenFlux2/utils"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // The Linux raw sockets deliver every packet the host receives. At -d the log

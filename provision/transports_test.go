@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/typeoftypes/OpenFlux2/share"
+	"github.com/p1neappleXpress/OpenFlux/share"
 )
 
 const (

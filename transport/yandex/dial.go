@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/typeoftypes/OpenFlux2/netbind"
+	"github.com/p1neappleXpress/OpenFlux/netbind"
 )
 
 // The tunnel itself is IPv4: the L3 exit's raw sockets, the client's gVisor

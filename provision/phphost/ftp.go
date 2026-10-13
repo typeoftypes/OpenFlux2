@@ -19,7 +19,7 @@ import (
 
 	"github.com/jlaffaye/ftp"
 
-	bundle "github.com/typeoftypes/OpenFlux2/deploy/phpbox"
+	bundle "github.com/p1neappleXpress/OpenFlux/deploy/phpbox"
 )
 
 // FTP is how to reach the account. The folder the site is served from is

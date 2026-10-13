@@ -3,7 +3,7 @@ package l3
 import (
 	"bytes"
 	"encoding/binary"
-	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport"
 	"testing"
 	"time"
 )

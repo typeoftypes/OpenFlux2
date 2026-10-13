@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/typeoftypes/OpenFlux2/utils"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // Defaults for the coalescing layer. Tunable at runtime via env vars so the

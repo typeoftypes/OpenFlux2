@@ -12,10 +12,10 @@ import (
 	"net"
 	"sync"
 
-	"github.com/typeoftypes/OpenFlux2/socks5"
-	"github.com/typeoftypes/OpenFlux2/transport/phpbox"
-	"github.com/typeoftypes/OpenFlux2/tunnel"
-	"github.com/typeoftypes/OpenFlux2/utils"
+	"github.com/p1neappleXpress/OpenFlux/socks5"
+	"github.com/p1neappleXpress/OpenFlux/transport/phpbox"
+	"github.com/p1neappleXpress/OpenFlux/tunnel"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // Options configure Start.

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/typeoftypes/OpenFlux2/utils"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // captureLog runs fn at the given debug level and returns what was logged.
