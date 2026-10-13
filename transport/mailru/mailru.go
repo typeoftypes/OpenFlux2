@@ -181,6 +181,7 @@ type MailruDocsTransport struct {
 	// are replaced under a live connection, and two reconnects open two
 	// sessions to the document.
 	reconnecting atomic.Bool
+	frags   map[uint32]*mailruFrag // cursor fragment reassembly
 }
 
 // NewMailruDocsTransport accepts either a bare weblink ("AbCdEfGh1/IjKlMnOp2")
