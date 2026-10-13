@@ -8,6 +8,7 @@ package mailru
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -33,6 +34,15 @@ import (
 // on some edge nodes; a current Firefox UA is accepted for both the API and the
 // WebSocket. Reported by @Shiller70 (issue #164).
 const mailruUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0"
+
+// maxMailruCursorRaw is the largest raw payload we put in one cursor field.
+// Live test 2026-10-13: 2048–3000 relay OK on public read-only docs; 4096
+// triggers disconnectReason 4004 "access deny". Stay under the cliff.
+const maxMailruCursorRaw = 2400
+
+// fragMagic marks a fragmented cursor payload (reassembled in handleMessage).
+var fragMagic = []byte{0x4d, 0x43} // "MC"
+
 
 var cursorPayloadRe = regexp.MustCompile(`"cursor":"[^;]+;([^"]+)"`)
 
@@ -431,13 +441,18 @@ func (t *MailruDocsTransport) writerLoop() {
 			continue
 		}
 
-		// Length prefix is the raw packet size (same convention as Yandex.Docs).
-		// Hardcoded "18;" made Mail.ru drop/close the socket on real tunnel
-		// frames → close 1005 and endless "transport not connected".
-		payload := base64.StdEncoding.EncodeToString(pending)
-		msg := fmt.Sprintf(`42["message",{"type":"cursor","cursor":"%d;%s"}]`, len(pending), payload)
-		if err := session.safeWrite(websocket.TextMessage, []byte(msg)); err != nil {
-			utils.Debugf("[M-DOCS] Write error: %v", err)
+		chunks := splitMailruCursor(pending)
+		writeFail := false
+		for _, chunk := range chunks {
+			payload := base64.StdEncoding.EncodeToString(chunk)
+			msg := fmt.Sprintf(`42["message",{"type":"cursor","cursor":"%d;%s"}]`, len(chunk), payload)
+			if err := session.safeWrite(websocket.TextMessage, []byte(msg)); err != nil {
+				utils.Debugf("[M-DOCS] Write error: %v", err)
+				writeFail = true
+				break
+			}
+		}
+		if writeFail {
 			time.Sleep(15 * time.Millisecond)
 			continue
 		}
@@ -573,8 +588,7 @@ func (t *MailruDocsTransport) handleMessage(session *DocSession, data []byte) {
 				utils.Debugf("[M-DOCS] Base64 decode error: %v", err)
 				continue
 			}
-			t.RecordReceive(len(decoded))
-			t.CallReceive(decoded)
+			t.deliverCursor(decoded)
 		}
 	}
 }
@@ -789,6 +803,91 @@ func (t *MailruDocsTransport) ApplyCookies(values map[string]string) error {
 	}
 	return nil
 }
+
+
+// splitMailruCursor returns one or more wire chunks ≤ maxMailruCursorRaw.
+// Single chunk is the plain packet; multi-chunk uses a 6-byte header:
+//   magic "MC" | u16be nchunks | u16be index | payload
+func splitMailruCursor(data []byte) [][]byte {
+	if len(data) <= maxMailruCursorRaw {
+		return [][]byte{data}
+	}
+	const hdr = 6
+	maxPayload := maxMailruCursorRaw - hdr
+	if maxPayload < 256 {
+		maxPayload = 256
+	}
+	n := (len(data) + maxPayload - 1) / maxPayload
+	if n > 0xffff {
+		// Unlikely; send what we can as a single oversized attempt.
+		return [][]byte{data}
+	}
+	out := make([][]byte, 0, n)
+	for i := 0; i < n; i++ {
+		start := i * maxPayload
+		end := start + maxPayload
+		if end > len(data) {
+			end = len(data)
+		}
+		chunk := make([]byte, hdr+end-start)
+		copy(chunk[0:2], fragMagic)
+		binary.BigEndian.PutUint16(chunk[2:4], uint16(n))
+		binary.BigEndian.PutUint16(chunk[4:6], uint16(i))
+		copy(chunk[hdr:], data[start:end])
+		out = append(out, chunk)
+	}
+	return out
+}
+
+type mailruFrag struct {
+	n       int
+	parts   [][]byte
+	got     int
+	deadline time.Time
+}
+
+// deliverCursor decodes one cursor payload: either a full packet or a fragment.
+func (t *MailruDocsTransport) deliverCursor(raw []byte) {
+	if len(raw) >= 6 && raw[0] == fragMagic[0] && raw[1] == fragMagic[1] {
+		n := int(binary.BigEndian.Uint16(raw[2:4]))
+		idx := int(binary.BigEndian.Uint16(raw[4:6]))
+		if n <= 0 || idx < 0 || idx >= n {
+			return
+		}
+		t.Mu.Lock()
+		if t.frags == nil {
+			t.frags = map[uint32]*mailruFrag{}
+		}
+		// Key by n and first-seen time bucket — use n<<16 as coarse id from first piece.
+		// Prefer: one in-flight reassembly keyed by n+size hint; simple single-slot:
+		key := uint32(n)
+		f := t.frags[key]
+		if f == nil || f.n != n || time.Now().After(f.deadline) {
+			f = &mailruFrag{n: n, parts: make([][]byte, n), deadline: time.Now().Add(15 * time.Second)}
+			t.frags[key] = f
+		}
+		if f.parts[idx] == nil {
+			f.parts[idx] = append([]byte(nil), raw[6:]...)
+			f.got++
+		}
+		if f.got == n {
+			delete(t.frags, key)
+			var full []byte
+			for i := 0; i < n; i++ {
+				full = append(full, f.parts[i]...)
+			}
+			t.Mu.Unlock()
+			t.RecordReceive(len(full))
+			t.CallReceive(full)
+			return
+		}
+		t.Mu.Unlock()
+		return
+	}
+	t.RecordReceive(len(raw))
+	t.CallReceive(raw)
+}
+
 
 func forceWSS(apiBase string) string {
 	apiBase = strings.TrimSpace(apiBase)
