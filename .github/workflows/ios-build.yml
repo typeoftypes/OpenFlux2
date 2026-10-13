@@ -21,10 +21,10 @@ on:
         type: string
         default: ''
       ios_path:
-        description: 'Path to iOS project (e.g., "ios" for React Native)'
+        description: 'Path to iOS project (empty = builder.json ios.path, e.g. ios-app)'
         required: false
         type: string
-        default: '.'
+        default: ''
       scheme:
         description: 'Xcode scheme to build (auto-detected if empty)'
         required: false
@@ -86,7 +86,6 @@ jobs:
           git fetch --depth=1 origin "+$SNAPSHOT_REF:refs/heads/snapshot"
           git checkout --force snapshot
           echo "Building $(git rev-parse --short HEAD)"
-
       # Dispatch inputs arrive with their declared defaults; a tag push has none,
       # so the values come from builder.json in the tagged commit (defaultProfile
       # included) and the build id is the tag name after the prefix.
@@ -114,9 +113,16 @@ jobs:
           fi
           param() { # name dispatch-value jq-path default
             local v=""
+            # workflow_dispatch inputs win only when the caller actually set them.
+            # Empty / generic defaults ("" or ".") fall through to builder.json so a
+            # monorepo with ios.path=ios-app is not mis-detected as KMP at the root.
             if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-              v="$2"
-            elif [ -f builder.json ]; then
+              case "$2" in
+                ""|".") v="" ;;
+                *) v="$2" ;;
+              esac
+            fi
+            if [ -z "$v" ] && [ -f builder.json ]; then
               v=$(jq -r --arg p "$PROFILE" "$3 // empty" builder.json)
             fi
             v="${v:-$4}"
@@ -136,7 +142,6 @@ jobs:
           param jdk_version      "$IN_JDK_VERSION" '.kmp.jdkVersion' '17'
           # A build number only comes from `builder ios release`, never builder.json.
           param build_number     "$IN_BUILD_NUMBER" '""' ''
-
           # The rest of the profile: name, distribution (selects the signing
           # set) and env, exported from here on so dependency installs see it.
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
@@ -190,7 +195,6 @@ jobs:
             } >> "$GITHUB_ENV"
             echo "env: $name"
           done < <(jq -r '.env // {} | to_entries[] | "\(.key | @base64) \(.value | tostring | @base64)"' <<< "$PROFILE_JSON")
-
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -204,22 +208,35 @@ jobs:
           key: deriveddata-${{ github.run_id }}
           restore-keys: |
             deriveddata-
-
       - name: Detect project type
         id: detect
+        env:
+          IOS_PATH: ${{ steps.params.outputs.ios_path }}
         run: |
+          set -e
+          # Prefer an explicit native iOS tree (XcodeGen project.yml or a committed
+          # .xcodeproj under ios.path). The repo root also hosts the Android KMP
+          # Gradle modules; those must NOT flip the whole monorepo to "kmp" or
+          # xcodebuild runs without -project and fails with exit 66.
+          ios="${IOS_PATH:-.}"
           if [ -f "pubspec.yaml" ]; then
-            echo "type=flutter" >> $GITHUB_OUTPUT
+            echo "type=flutter" >> "$GITHUB_OUTPUT"
           elif [ -f "package.json" ] && grep -q '"expo"' package.json; then
-            echo "type=expo" >> $GITHUB_OUTPUT
+            echo "type=expo" >> "$GITHUB_OUTPUT"
           elif [ -f "package.json" ] && grep -q '"react-native"' package.json; then
-            echo "type=reactnative" >> $GITHUB_OUTPUT
-          elif grep -rqlE 'kotlin\("multiplatform"\)|org\.jetbrains\.kotlin\.multiplatform|id\("org.jetbrains.kotlin.multiplatform"\)' --include='*.gradle.kts' --include='*.gradle' --include='libs.versions.toml' . 2>/dev/null; then
-            echo "type=kmp" >> $GITHUB_OUTPUT
+            echo "type=reactnative" >> "$GITHUB_OUTPUT"
+          elif [ -f "$ios/project.yml" ] || [ -f "$ios/project.yaml" ] \
+            || [ -n "$(find "$ios" -maxdepth 1 -name '*.xcodeproj' -print -quit 2>/dev/null)" ]; then
+            echo "type=native" >> "$GITHUB_OUTPUT"
+          elif grep -rqlE 'kotlin\("multiplatform"\)|org\.jetbrains\.kotlin\.multiplatform|id\("org.jetbrains.kotlin.multiplatform"\)' \
+              --include='*.gradle.kts' --include='*.gradle' --include='libs.versions.toml' \
+              --exclude-dir=androidApp --exclude-dir=shared --exclude-dir=gradle \
+              "$ios" . 2>/dev/null; then
+            echo "type=kmp" >> "$GITHUB_OUTPUT"
           else
-            echo "type=native" >> $GITHUB_OUTPUT
+            echo "type=native" >> "$GITHUB_OUTPUT"
           fi
-
+          echo "Detected type=$(grep '^type=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2) (ios.path=$ios)"
       # A gitignored *.xcconfig next to a committed template is a common iOS
       # convention. The snapshot then carries the template but not the config,
       # and xcodebuild fails with "Unable to open base configuration reference
@@ -241,7 +258,61 @@ jobs:
                 echo "::warning::$target was missing (gitignored?); copied $template over it. Any placeholder values in it are what the build sees."
               fi
             done
+      # The Go core is built into a static library and copied into the Xcode
+      # project's Lib/ directory, which project.yml references from both
+      # targets. It must exist before XcodeGen validates the manifest.
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
 
+      - name: Build liboflux.a (Go core, monorepo)
+        env:
+          IOS_PATH: ${{ steps.params.outputs.ios_path }}
+        run: |
+          set -euo pipefail
+          # Everything in one repo: mobile/ + transport/ at the root. No submodule.
+          if [ ! -d mobile/ios ]; then
+            echo "::error::mobile/ios not found — monorepo core missing"
+            ls -la
+            exit 1
+          fi
+          if [ -f transport/mailru/mailru.go ]; then
+            echo "mailruUserAgent:"
+            grep -n 'mailruUserAgent' transport/mailru/mailru.go || true
+          fi
+
+          if [ ! -f build_ios.sh ]; then
+            echo "::error::build_ios.sh not found"
+            exit 1
+          fi
+          chmod +x build_ios.sh
+          ./build_ios.sh
+
+          # Accept either monorepo paths
+          if [ ! -f output/ios/liboflux.a ] && [ -f ios-app/Lib/liboflux.a ]; then
+            mkdir -p output/ios
+            cp -f ios-app/Lib/liboflux.a output/ios/
+            [ -f ios-app/Lib/liboflux.h ] && cp -f ios-app/Lib/liboflux.h output/ios/
+          fi
+          if [ ! -f output/ios/liboflux.a ] && [ ! -f ios-app/Lib/liboflux.a ]; then
+            echo "::error::liboflux.a not produced (checked output/ios and ios-app/Lib)"
+            find . -name 'liboflux.a' 2>/dev/null | head -20 || true
+            exit 1
+          fi
+
+          mkdir -p "$IOS_PATH/Lib"
+          cp -f output/ios/liboflux.a "$IOS_PATH/Lib/"
+          if [ -f output/ios/liboflux.h ]; then
+            cp -f output/ios/liboflux.h "$IOS_PATH/Lib/"
+          elif ls output/ios/*.h >/dev/null 2>&1; then
+            cp -f "$(ls output/ios/*.h | head -1)" "$IOS_PATH/Lib/liboflux.h"
+          fi
+
+          /usr/bin/strings "$IOS_PATH/Lib/liboflux.a" > /tmp/liboflux.strings.txt 2>/dev/null || true
+          echo "UA in liboflux.a:"
+          grep -E 'Mozilla/5\.0|iPhone OS|Firefox/|Chrome/' /tmp/liboflux.strings.txt | sort -u | head -15 || true
+          ls -la "$IOS_PATH/Lib/"
       - name: Generate Xcode project (XcodeGen)
         env:
           IOS_PATH: ${{ steps.params.outputs.ios_path }}
@@ -254,7 +325,6 @@ jobs:
             exit 0
           fi
           cd "$IOS_PATH"
-
           # Projects generated by XcodeGen usually keep the .xcodeproj out of git,
           # so the checkout has a project.yml manifest but nothing to build.
           MANIFEST=""
@@ -264,17 +334,36 @@ jobs:
               break
             fi
           done
-
           if [ -z "$MANIFEST" ]; then
             echo "No XcodeGen manifest — skipping."
           elif [ -n "$(find . -maxdepth 1 -name '*.xcodeproj' -print -quit)" ]; then
             echo "Found a committed .xcodeproj — skipping generation."
           else
             echo "Found $MANIFEST and no .xcodeproj — generating with XcodeGen."
+            # XcodeGen validates source paths; Lib/ must exist even with buildPhase: none.
+            mkdir -p Lib
+            if [ ! -f Lib/liboflux.a ]; then
+              for cand in ../output/ios/liboflux.a ../../output/ios/liboflux.a                           "$GITHUB_WORKSPACE/output/ios/liboflux.a"                           "$GITHUB_WORKSPACE/ios-app/Lib/liboflux.a"; do
+                if [ -f "$cand" ]; then
+                  cp -f "$cand" Lib/liboflux.a
+                  break
+                fi
+              done
+            fi
+            ls -la Lib || true
+            if [ ! -f Lib/liboflux.a ]; then
+              echo "::error::Lib/liboflux.a missing before xcodegen (build core first)"
+              exit 1
+            fi
             brew install xcodegen
-            xcodegen generate
+            xcodegen generate --spec "$MANIFEST"
+            if [ -z "$(find . -maxdepth 1 -name '*.xcodeproj' -print -quit)" ]; then
+              echo "::error::xcodegen generate did not produce an .xcodeproj in $PWD"
+              ls -la
+              exit 1
+            fi
+            echo "Generated: $(find . -maxdepth 1 -name '*.xcodeproj' -print)"
           fi
-
       # Whatever the previous step could not fill in is named here, instead of
       # surfacing as xcodebuild's "Unable to open base configuration reference".
       - name: Check base configuration files
@@ -307,7 +396,6 @@ jobs:
             echo "::error::The project has base configuration files that are not in the repository:$MISSING. They are probably gitignored — commit them, or commit a <name>.xcconfig.template next to each so the build can fill them in."
             exit 1
           fi
-
       - name: Setup Flutter
         if: steps.detect.outputs.type == 'flutter'
         uses: subosito/flutter-action@v2
@@ -357,7 +445,6 @@ jobs:
             export JS_MANAGER JS_EXEC
             echo "Package manager: $JS_MANAGER"
           }
-
           # The Node version the project asks for: .nvmrc or .node-version, else the
           # first comparator of engines.node, else 22. A leading "v" or range prefix
           # is dropped: nvm, n and setup-node all take "20.11.1" and "24.x" as they are.
@@ -380,7 +467,6 @@ jobs:
             esac
             printf '%s\n' "$js_version"
           }
-
           # Put the manager on PATH first, then install — unless a cache already restored
           # node_modules, in which case the manager is still wanted for `expo prebuild`
           # and for the React Native build phases that shell out to it.
@@ -445,7 +531,6 @@ jobs:
             echo "node_version=$NODE_VERSION"
             echo "node_version_file=$NODE_VERSION_FILE"
           } >> "$GITHUB_OUTPUT"
-
       - name: Setup Node.js
         if: steps.detect.outputs.type == 'reactnative' || steps.detect.outputs.type == 'expo'
         uses: actions/setup-node@v7
@@ -465,7 +550,6 @@ jobs:
           key: node-modules-${{ runner.os }}-${{ steps.js.outputs.manager }}-${{ hashFiles('package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'bun.lock', 'bun.lockb') }}
           restore-keys: |
             node-modules-${{ runner.os }}-${{ steps.js.outputs.manager }}-
-
       # Runs even on a cache hit: the manager itself still has to be on PATH for
       # the prebuild and build steps that follow.
       - name: Install JS dependencies
@@ -505,7 +589,6 @@ jobs:
             export JS_MANAGER JS_EXEC
             echo "Package manager: $JS_MANAGER"
           }
-
           # The Node version the project asks for: .nvmrc or .node-version, else the
           # first comparator of engines.node, else 22. A leading "v" or range prefix
           # is dropped: nvm, n and setup-node all take "20.11.1" and "24.x" as they are.
@@ -528,7 +611,6 @@ jobs:
             esac
             printf '%s\n' "$js_version"
           }
-
           # Put the manager on PATH first, then install — unless a cache already restored
           # node_modules, in which case the manager is still wanted for `expo prebuild`
           # and for the React Native build phases that shell out to it.
@@ -576,7 +658,6 @@ jobs:
           }
           # <<< js toolchain
           js_install
-
       # A managed Expo project keeps no ios/ directory in git — `expo prebuild`
       # generates it from app.json / app.config.js. It needs node_modules, so it
       # runs here, and it must run before the Pods steps: the Podfile it writes
@@ -593,7 +674,6 @@ jobs:
             echo "'$IOS_PATH' already holds an Xcode project (ejected Expo) — skipping prebuild."
             exit 0
           fi
-
           # Without a bundle identifier prebuild asks for one interactively,
           # which on a runner means waiting for the job timeout.
           BUNDLE_ID=$(${JS_EXEC:-npx} expo config --type public --json 2>/dev/null | jq -r '.ios.bundleIdentifier // empty' 2>/dev/null || true)
@@ -609,13 +689,11 @@ jobs:
             exit 1
           fi
           echo "Prebuilding $BUNDLE_ID into '$IOS_PATH'..."
-
           ${JS_EXEC:-npx} expo prebuild --platform ios --no-install
           if [ -z "$(find "$IOS_PATH" -maxdepth 1 -name '*.xcodeproj' -print -quit 2>/dev/null)" ]; then
             echo "::error::'expo prebuild' produced no Xcode project in '$IOS_PATH'. If the project generates it elsewhere, set ios.path in builder.json."
             exit 1
           fi
-
       - name: Setup JDK
         if: steps.detect.outputs.type == 'kmp'
         uses: actions/setup-java@v6
@@ -641,7 +719,6 @@ jobs:
           key: pods-${{ runner.os }}-${{ hashFiles(format('{0}/Podfile.lock', steps.params.outputs.ios_path)) }}
           restore-keys: |
             pods-${{ runner.os }}-
-
       # One set of secrets per distribution, IOS_*_<SET>; the unsuffixed names
       # serve builds without a profile. A secret that does not exist arrives empty.
       - name: Install certificate and provisioning profile
@@ -673,7 +750,6 @@ jobs:
         run: |
           set -e
           fail() { echo "::error::$*" >&2; exit 1; }
-
           # Picks the set's IOS_*_<SET> secrets into the unsuffixed names, or with
           # no distribution takes the unsuffixed ones as they are (password
           # optional). A suffixed set needs all three, since builder signing setup
@@ -701,7 +777,6 @@ jobs:
             fi
             echo "Signing set: $SIGNING_SET_USED"
           }
-
           # Decodes the set's extension profiles (IOS_EXTENSION_PROFILES, a JSON object
           # of extension bundle id to base64 .mobileprovision) into $1, installs them
           # next to the app's, and prints a JSON object of bundle id to profile name
@@ -728,7 +803,6 @@ jobs:
             done < <(jq -r 'to_entries[] | "\(.key | @base64) \(.value)"' <<< "$json")
             printf '%s' "$map"
           }
-
           # The profile in the set must be the type the build profile asked for,
           # or the IPA would not be what the profile promised. Compared
           # canonically: the export method says app-store for store, and a tag
@@ -742,7 +816,6 @@ jobs:
               fail "IOS_PROVISIONING_PROFILE_$SIGNING_SET holds a $1 provisioning profile, but the build profile asks for distribution $want. Run builder signing setup --distribution $want, or set the profile's distribution to $have."
             fi
           }
-
           # The export method has to match the profile, or -exportArchive fails
           # and App Store Connect rejects the IPA. These legacy names are the only
           # ones older Xcodes (pinned or self-hosted runners) understand, and
@@ -760,7 +833,6 @@ jobs:
               echo app-store
             fi
           }
-
           # The certificate names that can sign for a profile of this type, the
           # current one first: keychains still hold pre-2021 iPhone Developer /
           # iPhone Distribution certificates that sign the same profiles.
@@ -771,7 +843,6 @@ jobs:
               *) return 1 ;;
             esac
           }
-
           # The identity to archive with: the first of those names in security
           # find-identity's output ($2). Without an explicit CODE_SIGN_IDENTITY the
           # archive keeps the project's default, which Xcode refuses to pair with a
@@ -784,9 +855,7 @@ jobs:
             done <<< "$names"
             return 2
           }
-
           select_signing_set
-
           # Read the profile first: its type is checked against the build
           # profile before any keychain exists or the certificate is imported.
           PROFILE_PATH=$RUNNER_TEMP/profile.mobileprovision
@@ -794,7 +863,6 @@ jobs:
           PROFILE_PLIST=$RUNNER_TEMP/profile.plist
           security cms -D -i "$PROFILE_PATH" > "$PROFILE_PLIST"
           PROFILE_UUID=$(plutil -extract UUID raw -o - "$PROFILE_PLIST")
-
           # xcodebuild will not pick a team on its own on a CI machine, so read
           # the team and profile name out of the profile and pass them to the
           # build as manual signing settings.
@@ -802,10 +870,8 @@ jobs:
           PROFILE_NAME=$(plutil -extract Name raw -o - "$PROFILE_PLIST")
           APP_ID=$(plutil -extract Entitlements.application-identifier raw -o - "$PROFILE_PLIST")
           PROFILE_BUNDLE_ID=${APP_ID#"$TEAM_ID".}
-
           EXPORT_METHOD=$(detect_export_method "$PROFILE_PLIST")
           check_signing_set "$EXPORT_METHOD"
-
           # A Debug archive carries get-task-allow=true, which no distribution
           # profile grants: the export fails, or an IPA that App Store Connect
           # rejects comes out. Say so now instead of after the whole build.
@@ -813,34 +879,28 @@ jobs:
             echo "::error::The provisioning profile is an $EXPORT_METHOD profile, but the build configuration is Debug. A Debug build is signed with get-task-allow, which distribution profiles do not allow and App Store Connect rejects. Drop the profile's \"configuration\" (a distribution build defaults to Release) or set \"configuration\": \"Release\", or build with a development profile."
             exit 1
           fi
-
           # Create temporary keychain
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
           KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
-
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
           # Import certificate
           CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
           echo "$IOS_CERTIFICATE" | base64 --decode > "$CERTIFICATE_PATH"
           security import "$CERTIFICATE_PATH" -P "$IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH"
-
           # The certificate has to be the kind the profile asks for, under
           # whichever of its names it carries. Say so here instead of letting
           # xcodebuild discover it after the whole archive.
           IDENTITIES=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH")
           echo "$IDENTITIES"
           CODE_SIGN_IDENTITY=$(signing_identity "$EXPORT_METHOD" "$IDENTITIES") || fail "IOS_CERTIFICATE${SIGNING_SET:+_$SIGNING_SET} holds no $(signing_identities "$EXPORT_METHOD" | paste -sd '/' -) certificate, which an $EXPORT_METHOD profile must be signed with. Run builder signing setup --distribution ${DISTRIBUTION:-<distribution>} to issue the right one."
-
           # Install the provisioning profiles: the app's, then its extensions'
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp "$PROFILE_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/"$PROFILE_UUID".mobileprovision
           EXTENSION_PROFILES=$(install_extension_profiles "$RUNNER_TEMP/extensions")
-
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> $GITHUB_ENV
           echo "DEVELOPMENT_TEAM=$TEAM_ID" >> $GITHUB_ENV
           echo "PROVISIONING_PROFILE_NAME=$PROFILE_NAME" >> $GITHUB_ENV
@@ -857,7 +917,6 @@ jobs:
           echo "  export:  $EXPORT_METHOD"
           echo "  identity: $CODE_SIGN_IDENTITY"
           echo "The build writes these into the app target's build settings; its PRODUCT_BUNDLE_IDENTIFIER must match the app id above. Extension targets get the profiles listed above by bundle id."
-
       - name: Build IPA
         env:
           BUILD_ID: ${{ steps.params.outputs.build_id }}
@@ -871,7 +930,6 @@ jobs:
         run: |
           set -e
           fail() { echo "::error::$*" >&2; exit 1; }
-
           # Writes the manual signing settings (team, profile and identity from the
           # environment) into the application targets of ./*.xcodeproj that the
           # profile's app id ($1, "*" wildcards) covers, and into every extension target
@@ -892,12 +950,10 @@ jobs:
           extension_types = {'com.apple.product-type.app-extension', 'com.apple.product-type.app-extension.messages',
                              'com.apple.product-type.extensionkit-extension', 'com.apple.product-type.application.watchapp2',
                              'com.apple.product-type.watchkit2-extension', 'com.apple.product-type.application.on-demand-install-capable'}
-
           def covers(pattern, bundle_id):
               if pattern.endswith('*'):
                   return bundle_id.startswith(pattern[:-1])
               return bundle_id == pattern
-
           apps, extensions, plists = [], [], {}
           for project in projects:
               path = os.path.join(project, 'project.pbxproj')
@@ -943,7 +999,6 @@ jobs:
             ) || fail "$out"
             echo "$out"
           }
-
           # BUILD_NUMBER is "N" or "X.Y.Z+N" (pubspec convention); sets build_number,
           # build_name and version_settings for xcodebuild. Given a target and scheme
           # it also rewrites an Info.plist that hardcodes CFBundleVersion, which
@@ -985,7 +1040,6 @@ jobs:
                 plutil -replace CFBundleShortVersionString -string "$build_name" "$plist" ;;
             esac
           }
-
           # Writes the export options ($1) with the same manual signing as the archive:
           # the app's real bundle id (APP_BUNDLE_ID) maps to its profile and every
           # extension keeps its own from EXTENSION_PROFILES.
@@ -1004,21 +1058,23 @@ jobs:
               plistlib.dump(options, out)
           PY
           }
-
           # Navigate to iOS project
           cd "$IOS_PATH"
-
           # Find workspace or project
           WORKSPACE=$(find . -maxdepth 1 -name "*.xcworkspace" | head -1)
           PROJECT=$(find . -maxdepth 1 -name "*.xcodeproj" | head -1)
-
+          # Monorepo safety: Android KMP at the repo root must not force the kmp
+          # build path when this directory is a native XcodeGen/Swift app.
+          if [ "$PROJECT_TYPE" = "kmp" ] && { [ -f project.yml ] || [ -f project.yaml ] || [ -n "$PROJECT" ]; }; then
+            echo "Overriding project type kmp -> native (found Xcode project under $IOS_PATH)"
+            PROJECT_TYPE=native
+          fi
           # Install pods if Podfile exists (always run to ensure sync with Podfile.lock)
           if [ -f "Podfile" ]; then
             echo "Running pod install..."
             pod install
             WORKSPACE=$(find . -maxdepth 1 -name "*.xcworkspace" | head -1)
           fi
-
           if [ -n "$WORKSPACE" ]; then
             TARGET_FLAG=-workspace
             TARGET_PATH=$WORKSPACE
@@ -1026,7 +1082,6 @@ jobs:
             TARGET_FLAG=-project
             TARGET_PATH=$PROJECT
           fi
-
           # Determine scheme (only needed for native projects)
           if [ -z "$SCHEME" ] && [ "$PROJECT_TYPE" = "native" ]; then
             if [ -n "$WORKSPACE" ]; then
@@ -1034,14 +1089,12 @@ jobs:
             else
               BASE=$(basename "$PROJECT" .xcodeproj)
             fi
-
             SCHEMES=$(xcodebuild "$TARGET_FLAG" "$TARGET_PATH" -list -json 2>/dev/null | jq -r '(.workspace // .project).schemes[]?' || true)
             if [ -z "$SCHEMES" ]; then
               SCHEMES=$(xcodebuild "$TARGET_FLAG" "$TARGET_PATH" -list 2>/dev/null | sed -n '/Schemes:/,$p' | tail -n +2 | sed 's/^[[:space:]]*//' | sed '/^$/d' || true)
             fi
             echo "Schemes:"
             printf '%s\n' "$SCHEMES" | sed 's/^/  /'
-
             # In a workspace, the scheme list also holds package and pod
             # schemes, and they sort ahead of the app as often as not. The
             # scheme named after the project is the app in nearly every repo.
@@ -1057,7 +1110,6 @@ jobs:
             fi
             echo "Building with scheme: $SCHEME (configuration: $CONFIGURATION)"
           fi
-
           if [ "$PROJECT_TYPE" = "native" ]; then
             if [ -z "$WORKSPACE" ] && [ -z "$PROJECT" ]; then
               echo "::error::No .xcworkspace or .xcodeproj found in '$IOS_PATH'. If the project is generated (XcodeGen/Tuist), commit it or add a generation step."
@@ -1068,10 +1120,8 @@ jobs:
               exit 1
             fi
           fi
-
           # Use custom DerivedData path for caching
           DERIVED_DATA_PATH="${GITHUB_WORKSPACE}/DerivedData"
-
           if [ "$PROJECT_TYPE" = "flutter" ]; then
             cd "$GITHUB_WORKSPACE"
             apply_build_number
@@ -1087,7 +1137,6 @@ jobs:
               flutter build ios --release --no-codesign $FLUTTER_VERSION_FLAGS
             fi
             cd "$IOS_PATH"
-
             if [ "$USE_SIGNING" = "true" ]; then
               # 'flutter build ios' never signs, so archive the Runner project it
               # generated. The IPA step below exports build/App.xcarchive
@@ -1101,7 +1150,6 @@ jobs:
                 echo "::error::Signing requested but no Runner workspace/project found in '$IOS_PATH'."
                 exit 1
               fi
-
               # Flutter wrote the build number into Generated.xcconfig; this
               # only catches a Runner Info.plist that hardcodes it.
               apply_build_number "$TARGET_FLAG" "$TARGET_PATH" -scheme "${SCHEME:-Runner}"
@@ -1112,7 +1160,6 @@ jobs:
               ARCHIVE_CMD="$ARCHIVE_CMD COMPILER_INDEX_STORE_ENABLE=NO $version_settings"
               ARCHIVE_CMD="$ARCHIVE_CMD -quiet"
               ARCHIVE_CMD="$ARCHIVE_CMD -archivePath '$GITHUB_WORKSPACE/build/App.xcarchive' archive"
-
               # The manual signing settings go on the Runner target, after
               # flutter build ios has regenerated the project.
               apply_signing_to_app_target "$PROFILE_BUNDLE_ID"
@@ -1131,13 +1178,16 @@ jobs:
             else
               echo "Building React Native iOS ($CONFIGURATION)..."
             fi
+            if [ -z "$WORKSPACE" ] && [ -z "$PROJECT" ]; then
+              echo "::error::No .xcworkspace or .xcodeproj in '$IOS_PATH' (type=$PROJECT_TYPE). For a monorepo with Android KMP modules, set ios.path to the native app (e.g. ios-app) and keep project.yml there so detection picks native."
+              exit 1
+            fi
             BUILD_CMD="xcodebuild"
             if [ -n "$WORKSPACE" ]; then
               BUILD_CMD="$BUILD_CMD -workspace $WORKSPACE"
             elif [ -n "$PROJECT" ]; then
               BUILD_CMD="$BUILD_CMD -project $PROJECT"
             fi
-
             # Auto-detect scheme from workspace/project name (e.g., MyApp.xcworkspace -> MyApp)
             # unless an explicit scheme was provided.
             if [ -z "$SCHEME" ]; then
@@ -1147,7 +1197,6 @@ jobs:
                 SCHEME=$(basename "$PROJECT" .xcodeproj)
               fi
             fi
-
             apply_build_number "$TARGET_FLAG" "$TARGET_PATH" -scheme "$SCHEME"
             BUILD_CMD="$BUILD_CMD -scheme '$SCHEME'"
             BUILD_CMD="$BUILD_CMD -configuration '$CONFIGURATION'"
@@ -1155,7 +1204,6 @@ jobs:
             BUILD_CMD="$BUILD_CMD -derivedDataPath '$DERIVED_DATA_PATH'"
             BUILD_CMD="$BUILD_CMD COMPILER_INDEX_STORE_ENABLE=NO $version_settings"
             BUILD_CMD="$BUILD_CMD -quiet"
-
             if [ "$USE_SIGNING" = "true" ]; then
               # Must archive, not build: the IPA step below exports
               # build/App.xcarchive whenever signing is on. The signing settings
@@ -1165,7 +1213,6 @@ jobs:
             else
               BUILD_CMD="$BUILD_CMD CODE_SIGNING_ALLOWED=NO build"
             fi
-
             echo "Running: $BUILD_CMD"
             eval $BUILD_CMD
           else
@@ -1175,24 +1222,20 @@ jobs:
             elif [ -n "$PROJECT" ]; then
               BUILD_CMD="$BUILD_CMD -project $PROJECT"
             fi
-
             apply_build_number "$TARGET_FLAG" "$TARGET_PATH" -scheme "$SCHEME"
             BUILD_CMD="$BUILD_CMD -scheme '$SCHEME'"
             BUILD_CMD="$BUILD_CMD -configuration '$CONFIGURATION'"
             BUILD_CMD="$BUILD_CMD -destination 'generic/platform=iOS'"
             BUILD_CMD="$BUILD_CMD -derivedDataPath '$DERIVED_DATA_PATH'"
             BUILD_CMD="$BUILD_CMD $version_settings"
-
             # Speed optimization flags
             BUILD_CMD="$BUILD_CMD COMPILER_INDEX_STORE_ENABLE=NO"
             BUILD_CMD="$BUILD_CMD DEBUG_INFORMATION_FORMAT=dwarf"
             BUILD_CMD="$BUILD_CMD ONLY_ACTIVE_ARCH=YES"
             BUILD_CMD="$BUILD_CMD -quiet"
-
             # Xcode 16+ native compilation caching
             BUILD_CMD="$BUILD_CMD SWIFT_ENABLE_COMPILE_CACHE=YES"
             BUILD_CMD="$BUILD_CMD CLANG_ENABLE_COMPILE_CACHE=YES"
-
             if [ "$USE_SIGNING" = "true" ]; then
               # For signed builds, use archive. Automatic signing cannot resolve a
               # team on a runner (no Xcode account), so sign the app target
@@ -1203,11 +1246,9 @@ jobs:
               # For unsigned builds, use faster 'build' action
               BUILD_CMD="$BUILD_CMD CODE_SIGNING_ALLOWED=NO build"
             fi
-
             echo "Running: $BUILD_CMD"
             eval $BUILD_CMD
           fi
-
           # Create IPA
           if [ "$USE_SIGNING" = "true" ]; then
             # For signed builds, use xcodebuild -exportArchive.
@@ -1215,19 +1256,16 @@ jobs:
             # the upload-artifact step ("build/*.ipa") resolves against — do not
             # use "cd .." here, it breaks when ios_path is "." (native at root).
             cd "$GITHUB_WORKSPACE"
-
             # The export has to use the same manual signing as the archive, and
             # it needs the app's real bundle id to map it to the profile.
             APP_BUNDLE_ID=$(plutil -extract ApplicationProperties.CFBundleIdentifier raw -o - build/App.xcarchive/Info.plist)
             echo "Exporting $APP_BUNDLE_ID with profile '$PROVISIONING_PROFILE_NAME' (team $DEVELOPMENT_TEAM), method $EXPORT_METHOD"
             export APP_BUNDLE_ID
             write_export_options ExportOptions.plist
-
             xcodebuild -exportArchive \
               -archivePath build/App.xcarchive \
               -exportOptionsPlist ExportOptions.plist \
               -exportPath build/export
-
             # Move IPA to expected location
             mv build/export/*.ipa "build/$BUILD_ID.ipa"
             echo "Created signed IPA: build/$BUILD_ID.ipa"
@@ -1256,7 +1294,6 @@ jobs:
                 APP_PATH=$(find "$DERIVED_DATA_PATH/Build/Products/${CONFIGURATION}-iphoneos" -maxdepth 1 -name "*.app" -type d -print -quit 2>/dev/null || true)
               fi
             fi
-
             if [ -z "$APP_PATH" ]; then
               echo "Error: Could not find .app"
               exit 1
@@ -1270,7 +1307,6 @@ jobs:
             rm -rf Payload
             echo "Created unsigned IPA: build/$BUILD_ID.ipa"
           fi
-
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v7
         with:
@@ -1286,7 +1322,6 @@ jobs:
         if: always()
         run: |
           if [ -d DerivedData ]; then echo "exists=yes" >> $GITHUB_OUTPUT; fi
-
       - name: Save DerivedData cache
         uses: actions/cache/save@v6
         if: always() && steps.dd.outputs.exists == 'yes'
@@ -1300,7 +1335,6 @@ jobs:
           if [ -n "$KEYCHAIN_PATH" ] && [ -f "$KEYCHAIN_PATH" ]; then
             security delete-keychain "$KEYCHAIN_PATH" || true
           fi
-
       - name: Build summary
         if: always()
         env:
@@ -1332,7 +1366,6 @@ jobs:
             IPA_PATH=$(find build -name "*.ipa" -type f | head -1)
             echo "- **IPA Size:** $(ls -lh "$IPA_PATH" | awk '{print $5}')" >> $GITHUB_STEP_SUMMARY
           fi
-
       # The tag exists only to start this run, so it leaves with it. Deleting
       # a tag fires no push event, so this cannot start another run.
       - name: Delete trigger tag
