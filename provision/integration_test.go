@@ -51,6 +51,7 @@ func TestInstallOnVDS(t *testing.T) {
 	release := func(version, core string) []byte {
 		s := regexp.MustCompile(`(?m)^SHA_amd64=.*$`).ReplaceAll(body, []byte(`SHA_amd64="`+core+`"`))
 		s = regexp.MustCompile(`(?m)^CORE_VERSION=.*$`).ReplaceAll(s, []byte(`CORE_VERSION="`+version+`"`))
+		s = regexp.MustCompile(`(?m)^RELEASE_REPO=.*$`).ReplaceAll(s, []byte(`RELEASE_REPO="typeoftypes/OpenFlux2"`))
 		for _, v := range []string{"GITHUB_API", "GITHUB_RAW", "GITHUB_WEB"} {
 			s = regexp.MustCompile(`(?m)^`+v+`=.*$`).ReplaceAll(s, []byte(v+`="`+base+`"`))
 		}
