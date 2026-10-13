@@ -26,7 +26,11 @@ final class VPNController: ObservableObject {
         refreshStatus()
     }
 
-    func start(transport: String, url: String, maxToken: String, maxUid: String) {
+    func start(transport: String, url: String, maxToken: String, maxUid: String,
+               dns: String, tunnelUDP: Bool, split: String = "",
+               directDomains: String = "", profileID: UUID? = nil,
+               keySlot: String = "", onDemand: Bool = true, nodeAddr: String = "",
+               session: String = "", stream: Bool = false, debug: Bool = false) {
         Task {
             let m = manager ?? NETunnelProviderManager()
             let proto = NETunnelProviderProtocol()
@@ -35,10 +39,39 @@ final class VPNController: ObservableObject {
             proto.providerConfiguration = [
                 "transport": transport, "url": url,
                 "maxToken": maxToken, "maxUid": maxUid,
+                "dns": dns,
+                "udp": tunnelUDP ? "1" : "0",
+                "split": split,   // "ru-direct" = GeoIP RU bypasses the tunnel
+                "directDomains": directDomains,  // user's own bypass suffixes
+                // Only the profile id — the encryption secret itself stays in the
+                // shared Keychain and is fetched by the extension. This dictionary
+                // is persisted with the VPN profile, so it must not hold secrets.
+                "profileID": profileID?.uuidString ?? "",
+                "keySlot": keySlot,   // "direct" = взять ключ прямого канала
+                // Адрес direct-канала узла: сигнал «session c direct» для
+                // маршрутизации (Яндекс в туннель, IP узла мимо).
+                "nodeAddr": nodeAddr,
+                // Готовый specs negotiate-профиля ({context,transports}). Не
+                // пусто = звать OpenFluxStartSessionPacketTunnel с этим и ключом.
+                "session": session,
+                // "1" = режим без сервера: OpenFluxStartStreamPacketTunnel.
+                "stream": stream ? "1" : "0",
+                // Подробный лог ядра В РАСШИРЕНИИ. Оно — отдельный процесс, и
+                // OpenFluxSetDebug из приложения до него не доходит; без этого
+                // ядро там стояло на LevelDebug (строка на каждый пакет) всегда.
+                "debug": debug ? "1" : "0",
             ]
             m.protocolConfiguration = proto
             m.localizedDescription = "OpenFlux"
             m.isEnabled = true
+            // Auto-reconnect: with on-demand enabled, iOS relaunches the tunnel
+            // whenever it drops (extension killed, network change, etc.) instead
+            // of leaving the user to toggle it back on manually. Downside — while
+            // the tunnel flaps, on-demand keeps grabbing traffic and can starve a
+            // TestFlight/App Store download (the "can't update" softlock), so it's
+            // user-toggleable.
+            m.isOnDemandEnabled = onDemand
+            m.onDemandRules = onDemand ? [NEOnDemandRuleConnect()] : []
             do {
                 try await m.saveToPreferences()
                 try await m.loadFromPreferences()   // required before starting
@@ -50,8 +83,126 @@ final class VPNController: ObservableObject {
         }
     }
 
+    /// Переключает подробный лог ядра в работающем расширении на лету.
+    func setDebug(_ on: Bool) {
+        guard let s = manager?.connection as? NETunnelProviderSession,
+              s.status != .disconnected, s.status != .invalid,
+              let msg = (on ? "debug1" : "debug0").data(using: .utf8) else { return }
+        try? s.sendProviderMessage(msg) { _ in }
+    }
+
     func stop() {
-        manager?.connection.stopVPNTunnel()
+        Task {
+            // Disable on-demand first, otherwise iOS would immediately reconnect
+            // the tunnel we're trying to stop.
+            if let m = manager {
+                m.isOnDemandEnabled = false
+                try? await m.saveToPreferences()
+                try? await m.loadFromPreferences()
+            }
+            manager?.connection.stopVPNTunnel()
+        }
+    }
+
+    // MARK: - Log relay
+    //
+    // The tunnel runs in a separate process, so the app cannot read the Go core's
+    // log directly — it asks the extension for it over the provider IPC channel.
+    // Set `logSink` to receive lines; polling runs only while the tunnel is up.
+
+    var logSink: ((String) -> Void)?
+
+    /// Document URL waiting on an interactive captcha inside the extension, or
+    /// nil. Polled over the same IPC channel as the log.
+    @Published var captchaURL: String?
+    /// Проверка в интересах узла: проходить НЕ отключая туннель.
+    @Published var remoteCaptchaURL: String?
+    /// Loopback HTTP proxy (host:port) for the «за узел» captcha WebView.
+    @Published var remoteCaptchaProxy: String?
+
+    private var logTimer: Timer?
+
+    private func startLogPolling() {
+        guard logTimer == nil else { return }
+        logTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.pullLog() }
+        }
+    }
+
+    private func stopLogPolling() {
+        logTimer?.invalidate()
+        logTimer = nil
+    }
+
+    private func pullLog() {
+        guard let session = activeSession, let msg = "log".data(using: .utf8) else { return }
+        // Throws if the extension isn't up yet; that is normal during startup.
+        try? session.sendProviderMessage(msg) { [weak self] data in
+            guard let data = data, !data.isEmpty,
+                  let s = String(data: data, encoding: .utf8), !s.isEmpty
+            else { return }
+            Task { @MainActor in self?.logSink?(s) }
+        }
+        pullCaptcha(session)
+        pullRemoteCaptcha(session)
+    }
+
+    private var activeSession: NETunnelProviderSession? {
+        guard let s = manager?.connection as? NETunnelProviderSession,
+              s.status == .connected || s.status == .reasserting || s.status == .connecting
+        else { return nil }
+        return s
+    }
+
+    private func pullCaptcha(_ session: NETunnelProviderSession) {
+        guard let msg = "captcha".data(using: .utf8) else { return }
+        try? session.sendProviderMessage(msg) { [weak self] data in
+            let url = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            Task { @MainActor in
+                self?.captchaURL = url.isEmpty ? nil : url
+            }
+        }
+    }
+
+    private func pullRemoteCaptcha(_ session: NETunnelProviderSession) {
+        guard let msg = "remotecaptcha".data(using: .utf8) else { return }
+        try? session.sendProviderMessage(msg) { [weak self] data in
+            let url = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            Task { @MainActor in self?.remoteCaptchaURL = url.isEmpty ? nil : url }
+        }
+        // Loopback proxy for the «за узел» WebView (routes the page via the exit).
+        if let pmsg = "captchaproxy".data(using: .utf8) {
+            try? session.sendProviderMessage(pmsg) { [weak self] data in
+                let p = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                Task { @MainActor in self?.remoteCaptchaProxy = p.isEmpty ? nil : p }
+            }
+        }
+    }
+
+    /// Отдаёт узлу куки, добытые через туннель (проверка пройдена с его адреса).
+    func offerCaptchaCookies(_ header: String) {
+        guard let session = activeSession,
+              let msg = "offer:\(header)".data(using: .utf8) else { return }
+        try? session.sendProviderMessage(msg) { [weak self] data in
+            let n = data.flatMap { String(data: $0, encoding: .utf8) } ?? "0"
+            Task { @MainActor in
+                self?.logSink?("[app] offered \(n) cookies to the exit node")
+                self?.remoteCaptchaURL = nil
+            }
+        }
+    }
+
+    /// Relays cookies solved in the app's WebView into the extension's core.
+    func applyCaptchaCookies(_ header: String) {
+        guard let session = activeSession,
+              let msg = "cookies:\(header)".data(using: .utf8) else { return }
+        try? session.sendProviderMessage(msg) { [weak self] data in
+            let n = data.flatMap { String(data: $0, encoding: .utf8) } ?? "0"
+            Task { @MainActor in
+                self?.logSink?("[app] captcha cookies handed to \(n) transport(s)")
+                self?.captchaURL = nil
+            }
+        }
     }
 
     @objc private func statusChanged() { refreshStatus() }
@@ -64,6 +215,11 @@ final class VPNController: ObservableObject {
         case .disconnecting: status = "Disconnecting…"; active = true
         case .reasserting:   status = "Reasserting…";  active = true
         default:             status = "Disconnected";  active = false
+        }
+        if conn.status == .connected || conn.status == .reasserting || conn.status == .connecting {
+            startLogPolling()
+        } else {
+            stopLogPolling()
         }
     }
 }
