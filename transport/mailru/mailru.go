@@ -431,8 +431,11 @@ func (t *MailruDocsTransport) writerLoop() {
 			continue
 		}
 
+		// Length prefix is the raw packet size (same convention as Yandex.Docs).
+		// Hardcoded "18;" made Mail.ru drop/close the socket on real tunnel
+		// frames → close 1005 and endless "transport not connected".
 		payload := base64.StdEncoding.EncodeToString(pending)
-		msg := fmt.Sprintf(`42["message",{"type":"cursor","cursor":"18;%s"}]`, payload)
+		msg := fmt.Sprintf(`42["message",{"type":"cursor","cursor":"%d;%s"}]`, len(pending), payload)
 		if err := session.safeWrite(websocket.TextMessage, []byte(msg)); err != nil {
 			utils.Debugf("[M-DOCS] Write error: %v", err)
 			time.Sleep(15 * time.Millisecond)
@@ -443,22 +446,29 @@ func (t *MailruDocsTransport) writerLoop() {
 }
 
 func (t *MailruDocsTransport) keepAliveLoop() {
+	// Engine.IO server pings ("2"/"3") already keep the socket alive (~25s).
+	// Application-level cursor keep-alives with "---KA---" trigger
+	// disconnectReason 4004 "access deny" on public read-only links (edit:false),
+	// which is most Mail.ru share URLs — verified 2026-10-13.
+	// Only send a tiny real-looking cursor when the link allows edit.
 	ticker := time.NewTicker(t.GetConfig().KeepAliveInterval)
 	defer ticker.Stop()
-	keepAliveMsg := `42["message",{"type":"cursor","cursor":"18;---KA---"}]`
 
 	for t.IsRunning() {
 		<-ticker.C
-		t.Mu.Lock()
+		t.Mu.RLock()
 		session := t.session
-		t.Mu.Unlock()
-
-		if session != nil && session.Conn != nil {
-			if err := session.safeWrite(websocket.TextMessage, []byte(keepAliveMsg)); err != nil {
-				utils.Debugf("[M-DOCS] Keep-alive failed, closing the connection to reconnect: %v", err)
-				t.SetConnected(false)
-				_ = session.Conn.Close()
-			}
+		t.Mu.RUnlock()
+		if session == nil || session.Conn == nil || !t.IsConnected() {
+			continue
+		}
+		if !canEdit(session.Info.Permissions) {
+			continue
+		}
+		// Length-correct 1-byte cursor (not the magic ---KA--- token).
+		msg := `42["message",{"type":"cursor","cursor":"1;YQ=="}]`
+		if err := session.safeWrite(websocket.TextMessage, []byte(msg)); err != nil {
+			utils.Debugf("[M-DOCS] Keep-alive write failed: %v", err)
 		}
 	}
 }
@@ -606,20 +616,22 @@ func (t *MailruDocsTransport) scheduleReconnect(attempt int) {
 	t.connectToDoc(next)
 }
 
-// reconnectBackoff returns an exponential backoff with jitter, capped at 15s.
+// reconnectBackoff returns an exponential backoff with jitter, capped at 6s.
+// Mail.ru edges often drop with 1005; a 15–22s wait left the session with
+// peer=00000000 and flooded "transport not connected" logs on mobile.
 func reconnectBackoff(n int) time.Duration {
 	if n < 1 {
 		n = 1
 	}
 	shift := n - 1
-	if shift > 5 {
-		shift = 5
+	if shift > 4 {
+		shift = 4
 	}
-	d := 500 * time.Millisecond * time.Duration(1<<uint(shift))
-	if d > 15*time.Second {
-		d = 15 * time.Second
+	d := 400 * time.Millisecond * time.Duration(1<<uint(shift))
+	if d > 6*time.Second {
+		d = 6 * time.Second
 	}
-	d += time.Duration(rand.Int63n(int64(d/2) + 1))
+	d += time.Duration(rand.Int63n(int64(d/3) + 1))
 	return d
 }
 
@@ -702,7 +714,6 @@ func (t *MailruDocsTransport) fetchDocInfo(weblink string) (MailruDocsInfo, erro
 		editorUserID, _ = userObj["id"].(string)
 	}
 
-	// Always WSS — some API responses still advertise http:// bases.
 	wsBase := forceWSS(apiBase)
 	wsURL := fmt.Sprintf("%s/doc/%s/c/?EIO=4&transport=websocket", wsBase, docKey)
 
@@ -779,7 +790,6 @@ func (t *MailruDocsTransport) ApplyCookies(values map[string]string) error {
 	return nil
 }
 
-// forceWSS maps http/https/ws API bases to wss://.
 func forceWSS(apiBase string) string {
 	apiBase = strings.TrimSpace(apiBase)
 	switch {
