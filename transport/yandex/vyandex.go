@@ -21,8 +21,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/typeoftypes/OpenFlux2/netbind"
 	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/typeoftypes/OpenFlux2/transport/stealth"
 	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
@@ -106,7 +106,7 @@ func SlimVolgaConfig() VolgaConfig {
 	return c
 }
 
-const volgaUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0"
+const volgaUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:144.0) Gecko/20100101 Firefox/144.0"
 
 var reClientConfig = regexp.MustCompile(`<script[^>]*id="client-config"[^>]*>(.*?)</script>`)
 
@@ -183,7 +183,7 @@ func authorizeWithJar(docURL string, jar http.CookieJar) (*volgaAuth, error) {
 	session := &http.Client{
 		Jar: jar,
 		Transport: &http.Transport{
-			DialContext:         netbind.DialContext,
+			DialContext:         dialIPv4First,
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 100,
 			IdleConnTimeout:     90 * time.Second,
@@ -437,10 +437,6 @@ func CheckVolgaDocument(docURL string, jar http.CookieJar) (VolgaDocument, error
 	return VolgaDocument{DocID: a.DocID, Editable: a.Action == "" || a.Action == "edit"}, nil
 }
 
-func authorize(docURL string) (*volgaAuth, error) {
-	return authorizeWithJar(docURL, nil)
-}
-
 func getStr(m map[string]interface{}, key string) string {
 	if m == nil {
 		return ""
@@ -548,7 +544,7 @@ type relayClient struct {
 
 func newRelayClient(auth *atomic.Pointer[volgaAuth], cfg VolgaConfig, stats *VolgaStats) *relayClient {
 	tr := &http.Transport{
-		DialContext:         netbind.DialContext,
+		DialContext:         dialIPv4First,
 		MaxIdleConns:        cfg.MaxIdleConns,
 		MaxIdleConnsPerHost: cfg.MaxIdleConnsPerHost,
 		IdleConnTimeout:     cfg.IdleConnTimeout,
@@ -969,7 +965,7 @@ func (w *wsListener) connect() error {
 	header.Set("Cookie", strings.Join(cookieParts, "; "))
 
 	dialer := websocket.Dialer{
-		NetDialContext:   netbind.DialContext,
+		NetDialContext:   dialIPv4First,
 		HandshakeTimeout: w.config.WSHandshakeTimeout,
 		ReadBufferSize:   w.config.WSReadBufferSize,
 		WriteBufferSize:  w.config.WSWriteBufferSize,

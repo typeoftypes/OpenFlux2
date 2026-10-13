@@ -21,7 +21,6 @@ import (
 const (
 	batchFormatVersion = 0x02
 	batchFlagZstd      = 0x01
-	batchFlagPadded    = 0x02
 	maxFrameBytes      = 1 << 20
 	maxFrameRecords    = 1024
 )
@@ -37,14 +36,14 @@ func init() {
 	// irrelevant next to the Yandex channel's latency. Single-shot EncodeAll /
 	// DecodeAll are safe for concurrent use on a shared instance.
 	zstdEnc, err = zstd.NewWriter(nil,
-		zstd.WithEncoderLevel(zstd.SpeedFastest),
-		zstd.WithEncoderConcurrency(2),
+		zstd.WithEncoderLevel(zstd.SpeedDefault),
+		zstd.WithEncoderConcurrency(1),
 	)
 	if err != nil {
 		panic(fmt.Sprintf("zstd encoder init: %v", err))
 	}
 	zstdDec, err = zstd.NewReader(nil,
-		zstd.WithDecoderConcurrency(2),
+		zstd.WithDecoderConcurrency(1),
 		// Bound the damage from a malformed/hostile frame injected into the
 		// shared document: cap decompressed memory.
 		zstd.WithDecoderMaxMemory(8<<20),
@@ -73,48 +72,27 @@ func frameBatch(pkts [][]byte) []byte {
 // encodeBatch serializes packets into a single wire-v2 frame, compressing
 // the whole batch with zstd only when that actually shrinks it.
 func encodeBatch(pkts [][]byte) []byte {
-	return encodeBatchWithPad(pkts, PadConfig{})
-}
-
-func encodeBatchWithPad(pkts [][]byte, pad PadConfig) []byte {
 	framed := frameBatch(pkts)
 	compressed := zstdEnc.EncodeAll(framed, nil)
 
 	if len(compressed) < len(framed) {
-		padding := batchPad(pad, 2+len(compressed)+2)
-		flags := byte(batchFlagZstd)
-		if padding > 0 {
-			flags |= batchFlagPadded
-		}
-		out := make([]byte, 2, 2+len(compressed)+2+padding)
+		out := make([]byte, 2, 2+len(compressed))
 		out[0] = batchFormatVersion
-		out[1] = flags
-		out = append(out, compressed...)
-		return appendPadding(out, padding)
+		out[1] = batchFlagZstd
+		return append(out, compressed...)
 	}
-	padding := batchPad(pad, 2+len(framed)+2)
-	flags := byte(0)
-	if padding > 0 {
-		flags |= batchFlagPadded
-	}
-	out := make([]byte, 2, 2+len(framed)+2+padding)
+	out := make([]byte, 2, 2+len(framed))
 	out[0] = batchFormatVersion
-	out[1] = flags
-	out = append(out, framed...)
-	return appendPadding(out, padding)
+	out[1] = 0
+	return append(out, framed...)
 }
 
-func appendPadding(out []byte, n int) []byte {
-	if n <= 0 {
-		return out
-	}
-	// A two-byte trailer stores the padding length. Padding is deliberately
-	// outside compression so it does not alter compression characteristics.
-	for i := 0; i < n; i++ {
-		out = append(out, byte(i*31+17))
-	}
-	return append(out, byte(n>>8), byte(n))
-}
+// EncodeBatchFrame serializes packets into a wire-v2 frame for transports that
+// carry the frame themselves instead of delegating to BatchedTransport - the
+// Telemost SFU path wraps each frame in a VP8 keyframe rather than passing it
+// up the transport stack. Such a transport must produce byte for byte what
+// BatchedTransport would have produced, or the receiving side rejects it.
+func EncodeBatchFrame(pkts [][]byte) []byte { return encodeBatch(pkts) }
 
 // decodeBatch reverses encodeBatch, returning the original packets.
 // Only wire-v2 frames are accepted; anything else is rejected.
@@ -129,20 +107,10 @@ func decodeBatch(data []byte) ([][]byte, error) {
 		return nil, fmt.Errorf("unknown batch version 0x%02x", data[0])
 	}
 	flags := data[1]
-	if flags & ^byte(batchFlagZstd|batchFlagPadded) != 0 {
+	if flags & ^byte(batchFlagZstd) != 0 {
 		return nil, fmt.Errorf("unknown batch flags 0x%02x", flags)
 	}
 	payload := data[2:]
-	if flags&batchFlagPadded != 0 {
-		if len(payload) < 2 {
-			return nil, fmt.Errorf("padded batch has no padding length")
-		}
-		n := int(binary.BigEndian.Uint16(payload[len(payload)-2:]))
-		if n < 1 || n+2 > len(payload) {
-			return nil, fmt.Errorf("invalid batch padding length %d", n)
-		}
-		payload = payload[:len(payload)-n-2]
-	}
 
 	framed := payload
 	if flags&batchFlagZstd != 0 {

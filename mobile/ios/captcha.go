@@ -60,54 +60,6 @@ func OpenFluxCaptchaReason() *C.char {
 	return C.CString(mobile.PendingCaptchaReason())
 }
 
-
-// OpenFluxCaptchaHTML returns a script transport's own page HTML, or "".
-// Free with OpenFluxFreeString. When non-empty the app should show this
-// instead of OpenFluxCaptchaPending URL.
-//
-//export OpenFluxCaptchaHTML
-func OpenFluxCaptchaHTML() *C.char {
-	return C.CString(mobile.PendingCaptchaHTML())
-}
-
-// OpenFluxCaptchaOwn is 1 when the pending page is the script's own
-// (no cookie harvesting; use OpenFluxSubmitCaptchaData).
-//
-//export OpenFluxCaptchaOwn
-func OpenFluxCaptchaOwn() C.int {
-	if mobile.PendingCaptchaOwn() {
-		return 1
-	}
-	return 0
-}
-
-// OpenFluxCaptchaTransport names the transport that asked for the check.
-// Free with OpenFluxFreeString.
-//
-//export OpenFluxCaptchaTransport
-func OpenFluxCaptchaTransport() *C.char {
-	return C.CString(mobile.PendingCaptchaTransport())
-}
-
-// OpenFluxSubmitCaptchaData hands JSON from a script's own page back to the
-// engine. Returns "" on success or an error string (free with OpenFluxFreeString).
-//
-//export OpenFluxSubmitCaptchaData
-func OpenFluxSubmitCaptchaData(json *C.char) *C.char {
-	if json == nil {
-		return C.CString("empty")
-	}
-	return C.CString(mobile.SubmitCaptchaData(C.GoString(json)))
-}
-
-// OpenFluxStreamExitIP asks the exit its public IP through the stream tunnel.
-// Free with OpenFluxFreeString.
-//
-//export OpenFluxStreamExitIP
-func OpenFluxStreamExitIP() *C.char {
-	return C.CString(mobile.StreamExitIP())
-}
-
 // OpenFluxApplyCaptchaCookies takes the cookies of a passed check (a
 // Cookie header, "a=1; b=2") and hands them to the carrier that asked:
 // this phone's, or the exit's (then they are sent to it). Returns the

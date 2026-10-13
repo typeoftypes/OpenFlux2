@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 
@@ -24,18 +23,11 @@ type Server struct {
 	path    string
 	handler Handler
 
-	mu              sync.Mutex
-	listener        net.Listener
-	conn            net.Conn
-	writeMu         sync.Mutex
-	closed          bool
-	pending         []pendingFrame
-	requestSequence uint64
-}
-
-type pendingFrame struct {
-	typ     MsgType
-	payload interface{}
+	mu       sync.Mutex
+	listener net.Listener
+	conn     net.Conn
+	writeMu  sync.Mutex
+	closed   bool
 }
 
 func NewServer(path string, h Handler) *Server {
@@ -78,22 +70,12 @@ func (s *Server) acceptLoop() {
 			utils.Debugf("[IPC] accept: %v", err)
 			continue
 		}
-		s.writeMu.Lock()
 		s.mu.Lock()
 		if s.conn != nil {
 			_ = s.conn.Close()
 		}
 		s.conn = conn
-		pending := append([]pendingFrame(nil), s.pending...)
-		s.pending = nil
 		s.mu.Unlock()
-		for _, frame := range pending {
-			if err := s.write(conn, frame.typ, frame.payload); err != nil {
-				utils.Debugf("[IPC] replay pending frame: %v", err)
-				break
-			}
-		}
-		s.writeMu.Unlock()
 		if s.handler != nil {
 			s.handler.OnConnect()
 		}
@@ -151,44 +133,16 @@ func (s *Server) Send(typ MsgType, payload interface{}) error {
 	defer s.writeMu.Unlock()
 	s.mu.Lock()
 	conn := s.conn
-	if s.closed {
-		s.mu.Unlock()
-		return ErrClosed
-	}
-	if conn == nil && typ == MsgCookiesRequest && !s.closed {
-		if len(s.pending) >= 8 {
-			s.pending = s.pending[1:]
-		}
-		s.pending = append(s.pending, pendingFrame{typ: typ, payload: payload})
-	}
 	s.mu.Unlock()
 	if conn == nil {
-		if typ == MsgCookiesRequest {
-			return nil
-		}
 		return errors.New("ipc: no client connected")
 	}
 	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	return WriteFrame(conn, typ, payload)
 }
 
-func (s *Server) write(conn net.Conn, typ MsgType, payload interface{}) error {
-	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	return WriteFrame(conn, typ, payload)
-}
-
 func (s *Server) SendCookiesRequest(p *CookiesRequestPayload) error {
-	if p == nil {
-		return errors.New("ipc: nil cookies request")
-	}
-	request := *p
-	s.mu.Lock()
-	if request.RequestID == "" {
-		s.requestSequence++
-		request.RequestID = strconv.FormatUint(s.requestSequence, 10)
-	}
-	s.mu.Unlock()
-	return s.Send(MsgCookiesRequest, &request)
+	return s.Send(MsgCookiesRequest, p)
 }
 
 func (s *Server) SendStatus(p *StatusPayload) error {

@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,22 +28,17 @@ type SOCKS5Server struct {
 	username   string
 	password   string
 
-	mu         sync.Mutex
-	listener   net.Listener
-	closed     bool
-	clients    map[net.Conn]struct{}
-	maxClients int
+	mu       sync.Mutex
+	listener net.Listener
+	closed   bool
+	clients  map[net.Conn]struct{}
 
 	bytesSent     atomic.Int64
 	bytesReceived atomic.Int64
 }
 
 func NewSOCKS5Server(addr string, dialer Dialer) *SOCKS5Server {
-	maxClients := 512
-	if value, err := strconv.Atoi(os.Getenv("OPENFLUX_SOCKS5_MAX_CLIENTS")); err == nil && value > 0 {
-		maxClients = value
-	}
-	return &SOCKS5Server{listenAddr: addr, dialer: dialer, clients: make(map[net.Conn]struct{}), maxClients: maxClients}
+	return &SOCKS5Server{listenAddr: addr, dialer: dialer, clients: make(map[net.Conn]struct{})}
 }
 
 // SetAuth requires SOCKS5 username/password authentication (RFC 1929) for
@@ -157,7 +150,7 @@ const (
 
 func (s *SOCKS5Server) handleConnection(clientConn net.Conn) {
 	s.mu.Lock()
-	if s.closed || len(s.clients) >= s.maxClients {
+	if s.closed || len(s.clients) >= 256 {
 		s.mu.Unlock()
 		_ = clientConn.Close()
 		return

@@ -42,7 +42,11 @@ func DecodeCookies(b []byte) (*CookiesPayload, error) {
 type AuthRequiredPayload struct {
 	Transport string `json:"transport"`
 	URL       string `json:"url"`
-	// HTML is a script transport's own setup/login page; "" for native transports.
+	// HTML is a script transport's own setup/login page (see
+	// transport/script/js/template_html.html), forwarded instead of URL
+	// when the exit's transport raised it with one; "" for every native
+	// transport, which only ever point at a real site. Older peers ignore
+	// an unknown field, same as Doc below.
 	HTML   string `json:"html,omitempty"`
 	Reason string `json:"reason"`
 	// Doc: see CookiesPayload.Doc.

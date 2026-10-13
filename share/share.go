@@ -63,7 +63,7 @@ const ModeStream = "stream"
 // streamTypes are the carriers a stream-mode exit speaks: deploy/phpbox has a
 // carrier for cups.online and one for Mail.ru documents, and a link names what
 // the exit on the other end actually runs.
-var streamTypes = map[string]bool{"cupsonline": true, "mailru": true, "phpbox": true}
+var streamTypes = map[string]bool{"cupsonline": true, "mailru": true}
 
 // Error is a link that cannot be used: Code says which problem it is (for
 // the apps), Param the value it is about, Error() the English detail the
@@ -123,7 +123,7 @@ type Config struct {
 // own.
 var knownTypes = map[string]bool{
 	"yandex": true, "vyandex": true, "boards": true, "mailru": true,
-	"cupsonline": true, "direct": true,
+	"cupsonline": true, "direct": true, "telemost": true,
 }
 
 // Validate reports whether c describes something a client can connect with.
@@ -180,7 +180,7 @@ func (c *Config) validateStream() error {
 		return linkError(CodeStreamOneTransport, "", "share: stream mode rides exactly one transport", nil)
 	}
 	if t := c.Transports[0].Type; !streamTypes[t] {
-		return linkError(CodeStreamTransport, t, fmt.Sprintf("share: stream mode cannot ride %q (cups.online, mail.ru, phpbox)", t), nil)
+		return linkError(CodeStreamTransport, t, fmt.Sprintf("share: stream mode cannot ride %q (cups.online, mail.ru)", t), nil)
 	}
 	if c.Negotiate || c.Secret != "" {
 		return linkError(CodeStreamPlainOnly, "", "share: stream mode has no session or encryption secret", nil)

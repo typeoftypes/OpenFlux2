@@ -116,12 +116,6 @@ type DirectTransport struct {
 	recordsOut atomic.Uint64
 }
 
-var directReadBufferPool = sync.Pool{
-	New: func() interface{} {
-		return make([]byte, DefaultDirectConfig().MaxRecordBytes)
-	},
-}
-
 // NewDirectTransport builds a DirectTransport from a base config and a
 // transport.DirectConfig.
 //
@@ -365,11 +359,7 @@ func (t *DirectTransport) serveConn(conn net.Conn) {
 		_ = conn.Close()
 	}()
 
-	buf := directReadBufferPool.Get().([]byte)
-	if len(buf) < t.config.MaxRecordBytes {
-		buf = make([]byte, t.config.MaxRecordBytes)
-	}
-	defer directReadBufferPool.Put(buf)
+	buf := make([]byte, t.config.MaxRecordBytes)
 	for {
 		select {
 		case <-t.done:
@@ -465,19 +455,13 @@ func (t *DirectTransport) writerLoop() {
 		}
 
 		t.writeMu.Lock()
-		err := conn.SetWriteDeadline(time.Now().Add(20 * time.Second))
+		_, err := conn.Write(hdr[:])
 		if err == nil {
-			err = writeFull(conn, hdr[:])
-		}
-		if err == nil {
-			err = writeFull(conn, pending)
+			_, err = conn.Write(pending)
 		}
 		t.writeMu.Unlock()
 
 		if err != nil {
-			// A partially written record cannot be retried on this stream:
-			// its next header would be interpreted as the previous body.
-			_ = conn.Close()
 			utils.Debugf("[DIRECT] writerLoop: WRITE FAILED for %s: %v (holding record, retry in 20ms)",
 				connDesc(conn), err)
 			select {
@@ -493,25 +477,6 @@ func (t *DirectTransport) writerLoop() {
 		t.recordsOut.Add(1)
 		pending = nil
 	}
-}
-
-// writeFull handles the legal net.Conn case where Write returns a short
-// write without an error. Losing the tail of a length-prefixed record would
-// desynchronize the stream and force an unnecessary reconnect.
-func writeFull(w io.Writer, p []byte) error {
-	for len(p) > 0 {
-		n, err := w.Write(p)
-		if n > 0 {
-			p = p[n:]
-		}
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			return io.ErrShortWrite
-		}
-	}
-	return nil
 }
 
 // connDesc returns a short descriptor for a net.Conn for logging.

@@ -3,13 +3,12 @@ package phpbox
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
+
+	"github.com/typeoftypes/OpenFlux2/transport/stealth"
 )
 
 // Client is a Mux over the direct-HTTP two-channel carrier - for a phpbox
@@ -30,53 +29,14 @@ func NewClient(endpoint, token, session string) *Client {
 	return &Client{Mux: m}
 }
 
-// NewHTTPCarrier returns the masked direct-HTTP carrier without a Mux.
-// streamproxy and tunnel.StreamNet create the mux themselves.
-func NewHTTPCarrier(endpoint, token, session string) Carrier {
-	if session == "" {
-		session = randomSessionID()
-	}
-	return newHTTPCarrier(endpoint, token, session)
-}
-
-// ParseEndpoint splits "https://host/path/phpbox.php|token" or
-// "https://host/path/phpbox.php?k=token" into endpoint URL and token.
-func ParseEndpoint(ref string) (endpoint, token string) {
-	ref = strings.TrimSpace(ref)
-	if ref == "" {
-		return "", ""
-	}
-	if i := strings.Index(ref, "|"); i >= 0 {
-		return strings.TrimSpace(ref[:i]), strings.TrimSpace(ref[i+1:])
-	}
-	u, err := url.Parse(ref)
-	if err != nil {
-		return ref, ""
-	}
-	token = u.Query().Get("k")
-	if token == "" {
-		token = u.Query().Get("token")
-	}
-	q := u.Query()
-	q.Del("k")
-	q.Del("token")
-	q.Del("s")
-	q.Del("r")
-	u.RawQuery = q.Encode()
-	return u.String(), token
-}
-
 // httpCarrier speaks the two-channel HTTP link phpbox.php exposes: it streams
 // exit->client bytes from a long-poll GET (down) and batches client->exit
 // bytes into short POSTs (up), because such hosts buffer request bodies but
 // stream responses.
-//
-// Requests carry ordinary browser XHR headers so shared hosting sees web
-// traffic, not a bare tunnel client. No dependency on transport.masking types.
 type httpCarrier struct {
 	endpoint, token, session string
+	profile                  stealth.Profile
 	http                     *http.Client
-	userAgent                string
 
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -87,28 +47,15 @@ type httpCarrier struct {
 
 func newHTTPCarrier(endpoint, token, session string) *httpCarrier {
 	ctx, cancel := context.WithCancel(context.Background())
-	if session == "" {
-		session = randomSessionID()
-	}
 	return &httpCarrier{
-		endpoint:  strings.TrimSpace(endpoint),
-		token:     token,
-		session:   session,
-		userAgent: browserUA(),
-		http: &http.Client{
-			Timeout: 0, // the down-poll is long-lived
-			Transport: &http.Transport{
-				Proxy:                 http.ProxyFromEnvironment,
-				MaxIdleConns:          6,
-				IdleConnTimeout:       90 * time.Second,
-				TLSHandshakeTimeout:   15 * time.Second,
-				ExpectContinueTimeout: 1 * time.Second,
-				ForceAttemptHTTP2:     true,
-			},
-		},
-		ctx:    ctx,
-		cancel: cancel,
-		upCh:   make(chan []byte, 256),
+		endpoint: endpoint,
+		token:    token,
+		session:  session,
+		profile:  stealth.PreferDesktop(),
+		http:     &http.Client{Timeout: 0}, // the down-poll is long-lived
+		ctx:      ctx,
+		cancel:   cancel,
+		upCh:     make(chan []byte, 256),
 	}
 }
 
@@ -138,31 +85,6 @@ func (h *httpCarrier) url(role string) string {
 	return h.endpoint + "?" + v.Encode()
 }
 
-func originOf(endpoint string) string {
-	u, err := url.Parse(endpoint)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return ""
-	}
-	return u.Scheme + "://" + u.Host
-}
-
-// maskRequest applies browser-like XHR headers without importing transport.masking.
-func (h *httpCarrier) maskRequest(req *http.Request) {
-	req.Header.Set("User-Agent", h.userAgent)
-	req.Header.Set("Accept", "application/octet-stream, */*;q=0.8")
-	req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
-	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
-	req.Header.Set("Sec-Fetch-Dest", "empty")
-	req.Header.Set("Sec-Fetch-Mode", "cors")
-	req.Header.Set("Sec-Fetch-Site", "same-origin")
-	req.Header.Set("X-Requested-With", "XMLHttpRequest")
-	req.Header.Set("Cache-Control", "no-cache")
-	if origin := originOf(h.endpoint); origin != "" {
-		req.Header.Set("Origin", origin)
-		req.Header.Set("Referer", origin+"/")
-	}
-}
-
 // upLoop batches queued bytes and POSTs them to the up route.
 func (h *httpCarrier) upLoop() {
 	t := time.NewTicker(20 * time.Millisecond)
@@ -172,18 +94,17 @@ func (h *httpCarrier) upLoop() {
 		if len(buf) == 0 {
 			return
 		}
-		body := buf
+		req, err := http.NewRequestWithContext(h.ctx, http.MethodPost, h.url("up"), bytes.NewReader(buf))
+		if err == nil {
+			stealth.ApplyBrowserHeaders(req.Header, h.profile, "", "")
+			req.Header.Set("Content-Type", "application/octet-stream")
+			req.Header.Set("Accept", "application/octet-stream, */*")
+			if resp, err := h.http.Do(req); err == nil {
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+			}
+		}
 		buf = buf[:0]
-		req, err := http.NewRequestWithContext(h.ctx, http.MethodPost, h.url("up"), bytes.NewReader(body))
-		if err != nil {
-			return
-		}
-		h.maskRequest(req)
-		req.Header.Set("Content-Type", "application/octet-stream")
-		if resp, err := h.http.Do(req); err == nil {
-			io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
-		}
 	}
 	for {
 		select {
@@ -206,54 +127,30 @@ func (h *httpCarrier) upLoop() {
 	}
 }
 
-// downLoop long-polls the down route and delivers chunks to recv.
+// downLoop holds the streaming GET and feeds exit->client bytes to the mux
+// until the exit caps it or it errors, then reports the session closed.
 func (h *httpCarrier) downLoop() {
-	defer func() {
-		if h.onClosed != nil {
-			h.onClosed()
-		}
-	}()
-	for {
-		if h.ctx.Err() != nil {
-			return
-		}
-		req, err := http.NewRequestWithContext(h.ctx, http.MethodGet, h.url("down"), nil)
-		if err != nil {
-			return
-		}
-		h.maskRequest(req)
-		resp, err := h.http.Do(req)
-		if err != nil {
-			select {
-			case <-h.ctx.Done():
-				return
-			case <-time.After(500 * time.Millisecond):
-				continue
-			}
-		}
-		func() {
-			defer resp.Body.Close()
-			buf := make([]byte, 32*1024)
-			for {
-				n, err := resp.Body.Read(buf)
-				if n > 0 && h.recv != nil {
-					h.recv(append([]byte(nil), buf[:n]...))
-				}
-				if err != nil {
-					return
-				}
-			}
-		}()
+	if h.onClosed != nil {
+		defer h.onClosed()
 	}
-}
+	req, err := http.NewRequestWithContext(h.ctx, http.MethodGet, h.url("down"), nil)
+	if err != nil {
+		return
+	}
+	resp, err := h.http.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
 
-func randomSessionID() string {
-	var b [16]byte
-	_, _ = rand.Read(b[:])
-	return fmt.Sprintf("%x", b[:])
-}
-
-func browserUA() string {
-	// Fixed modern Chrome UA — consistent fingerprint for the session.
-	return "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0"
+	tmp := make([]byte, 32768)
+	for {
+		n, rerr := resp.Body.Read(tmp)
+		if n > 0 && h.recv != nil {
+			h.recv(tmp[:n])
+		}
+		if rerr != nil {
+			return
+		}
+	}
 }

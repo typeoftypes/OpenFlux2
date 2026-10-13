@@ -39,8 +39,8 @@
 | **macOS**   | сборка из исходников | CLI + utun L3-клиент (`--inbound=tun`, по умолчанию на macOS) |
 | **Linux**   | сборка из исходников | CLI-клиент (SOCKS5) / выходная нода (L3 или L4) |
 | **Windows** | сборка из исходников | CLI-клиент (SOCKS5, либо `--inbound=tun` через Wintun - нужны права администратора) / выходная нода (`l4`, либо `l3` через QEMU - см. TODO) |
-| **Desktop** | [Релизы OpenFluxDesktop](https://github.com/typeoftypes/OpenFlux2Desktop) | Windows/macOS/Linux: полный туннель или SOCKS5/HTTP-прокси, сессии с несколькими транспортами, шифрование, мастер разворачивания ноды по SSH из приложения |
-| **Android** | [Релизы OpenFluxAndroid](https://github.com/typeoftypes/OpenFlux2Android) | Системный VPN или локальный SOCKS5, сессии с несколькими транспортами и переключением между ними, шифрование, обработка капчи во встроенном браузере |
+| **Desktop** | [Релизы OpenFluxDesktop](https://github.com/p1neappleXpress/OpenFluxDesktop) | Windows/macOS/Linux: полный туннель или SOCKS5/HTTP-прокси, сессии с несколькими транспортами, шифрование, мастер разворачивания ноды по SSH из приложения |
+| **Android** | [Релизы OpenFluxAndroid](https://github.com/p1neappleXpress/OpenFluxAndroid) | Системный VPN или локальный SOCKS5, сессии с несколькими транспортами и переключением между ними, шифрование, обработка капчи во встроенном браузере |
 | **Android** | [Релизы OpenFlux-Android](https://github.com/damnurmum/OpenFlux-Android/releases/latest) | Форк: системный VPN или SOCKS5-прокси, сессии с несколькими транспортами, обработка капчи, телефон как выходная нода |
 | **iOS**     | [TestFlight бета](https://testflight.apple.com/join/BwnAcdus) | Системный VPN через Network Extension |
 
@@ -65,9 +65,9 @@
 > [OpenFluxClient](https://github.com/meepo161/OpenFluxClient) и перенесённые
 > в эти репозитории с его согласия. ОГРОМНОЕ спасибо!
 >
-> **Android-приложение** - [p1neappleXpress/OpenFluxAndroid](https://github.com/typeoftypes/OpenFlux2Android),
-> **desktop-приложение** - [p1neappleXpress/OpenFluxDesktop](https://github.com/typeoftypes/OpenFlux2Desktop),
-> общий модуль обоих - [p1neappleXpress/OpenFluxClientShared](https://github.com/typeoftypes/OpenFlux2ClientShared).
+> **Android-приложение** - [p1neappleXpress/OpenFluxAndroid](https://github.com/p1neappleXpress/OpenFluxAndroid),
+> **desktop-приложение** - [p1neappleXpress/OpenFluxDesktop](https://github.com/p1neappleXpress/OpenFluxDesktop),
+> общий модуль обоих - [p1neappleXpress/OpenFluxClientShared](https://github.com/p1neappleXpress/OpenFluxClientShared).
 
 ## Архитектура
 
@@ -147,7 +147,7 @@ RST, которые локально генерирует ядро выходн�
   Yandex Board (WS), MAX/OneMe (WebRTC DataChannel), Cups.online
   (Centrifugo-комнаты), Mail.ru Docs (WS), Direct (прямое TCP до выходной
   ноды, только в сессии).
-- **Профили маскирования размера** - `OPENFLUX_MASKING=balanced` или `aggressive`включают дополнительный случайный padding wire-v2; `OPENFLUX_MASKING=off` отключаетего. Явный `OPENFLUX_BATCH_PAD=min,max` имеет приоритет. Маскирование увеличиваетрасход трафика, поэтому для максимального goodput по умолчанию оно выключено.- **Батчинг + zstd** - склеивает множество туннельных пакетов в одно
+- **Батчинг + zstd** - склеивает множество туннельных пакетов в одно
   транспортное сообщение. Меньше сообщений в канале, выше скорость. См.
   `transport/batched.go` и `transport/framing.go`.
 - **IPv4 UDP** - L4 и SOCKS5 `UDP ASSOCIATE` проверяются локальными echo-тестами.

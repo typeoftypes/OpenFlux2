@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/typeoftypes/OpenFlux2/transport/stealth"
 	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
@@ -37,12 +38,13 @@ func solveCaptcha(docURL string, jar http.CookieJar, userAgent string) (string, 
 		return "", fmt.Errorf("captcha: nil cookiejar")
 	}
 	if userAgent == "" {
-		userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0"
+		userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:144.0) Gecko/20100101 Firefox/144.0"
 	}
 
 	client := &http.Client{
-		Jar:     jar,
-		Timeout: 30 * time.Second,
+		Jar:       jar,
+		Transport: carrierTransport(),
+		Timeout:   30 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

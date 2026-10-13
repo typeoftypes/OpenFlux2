@@ -12,7 +12,7 @@ import (
 const (
 	WS_HOST     = "wss://ws-api.oneme.ru/websocket"
 	RPC_VERSION = 11
-	USER_AGENT  = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0"
+	USER_AGENT  = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
 )
 
 func NewMaxClient() *MaxClient {

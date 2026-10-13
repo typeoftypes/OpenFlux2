@@ -26,24 +26,25 @@ const (
 	MsgStatus         MsgType = 0x03
 	MsgCommand        MsgType = 0x04
 	MsgLog            MsgType = 0x05
-	MsgHello          MsgType = 0x06
 )
 
 // MaxFrameBytes caps a single frame.
 const MaxFrameBytes = 1 << 20
 
-// ProtocolVersion is the app/core IPC schema version. New fields remain
-// additive, while this value lets clients reject incompatible revisions
-// instead of silently losing control or CAPTCHA events.
-const ProtocolVersion = 1
-
 type CookiesRequestPayload struct {
-	RequestID string `json:"request_id,omitempty"`
 	Transport string `json:"transport"`
 	URL       string `json:"url"`
-	// HTML is a script transport's own page (shown instead of URL when set).
+	// HTML is a script transport's own setup/login page (see
+	// transport/script/js/template_html.html), sent instead of URL when
+	// the transport raised one; "" for every native transport.
 	HTML   string `json:"html,omitempty"`
 	Reason string `json:"reason"`
+	// Own marks a page that is the script's own - HTML, or a URL on the
+	// script's own loopback server (http://127.0.0.1:port) - rather than a
+	// real site: the app shows it as it is, gives it window.openfluxSubmit
+	// and does not collect cookies from it. The core decides this
+	// (script.IsOwnPage); an app must not guess from the URL.
+	Own bool `json:"own,omitempty"`
 	// Remote marks a check the exit node needs: it must be passed from the
 	// exit's address, and the answering offer must set Remote too.
 	Remote bool `json:"remote,omitempty"`
@@ -53,7 +54,6 @@ type CookiesRequestPayload struct {
 }
 
 type CookiesOfferPayload struct {
-	RequestID string            `json:"request_id,omitempty"`
 	Transport string            `json:"transport"`
 	Jar       map[string]string `json:"jar"`
 	Domain    string            `json:"domain,omitempty"`
@@ -63,24 +63,17 @@ type CookiesOfferPayload struct {
 }
 
 type StatusPayload struct {
-	ProtocolVersion int      `json:"protocol_version,omitempty"`
-	Capabilities    []string `json:"capabilities,omitempty"`
-	Running         bool     `json:"running"`
-	Connected       bool     `json:"connected"`
-	BytesIn         uint64   `json:"bytes_in"`
-	BytesOut        uint64   `json:"bytes_out"`
-	UptimeMs        int64    `json:"uptime_ms"`
+	Running   bool   `json:"running"`
+	Connected bool   `json:"connected"`
+	BytesIn   uint64 `json:"bytes_in"`
+	BytesOut  uint64 `json:"bytes_out"`
+	UptimeMs  int64  `json:"uptime_ms"`
 	// Active names the carrier data currently goes through ("" when none
 	// reaches the peer). Sessions only.
 	Active string `json:"active,omitempty"`
 	// ActiveAll names every carrier data is spread over: several when they
 	// share the highest priority. Active is the first. Sessions only.
 	ActiveAll []string `json:"active_all,omitempty"`
-}
-
-type HelloPayload struct {
-	ProtocolVersion int      `json:"protocol_version"`
-	Capabilities    []string `json:"capabilities,omitempty"`
 }
 
 type CommandPayload struct {
@@ -109,28 +102,12 @@ func WriteFrame(w io.Writer, typ MsgType, payload interface{}) error {
 	var hdr [5]byte
 	binary.BigEndian.PutUint32(hdr[:4], uint32(n))
 	hdr[4] = byte(typ)
-	if err := writeFull(w, hdr[:]); err != nil {
+	if _, err := w.Write(hdr[:]); err != nil {
 		return err
 	}
 	if len(body) > 0 {
-		if err := writeFull(w, body); err != nil {
+		if _, err := w.Write(body); err != nil {
 			return err
-		}
-	}
-	return nil
-}
-
-func writeFull(w io.Writer, data []byte) error {
-	for len(data) > 0 {
-		n, err := w.Write(data)
-		if n > 0 {
-			data = data[n:]
-		}
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			return io.ErrShortWrite
 		}
 	}
 	return nil

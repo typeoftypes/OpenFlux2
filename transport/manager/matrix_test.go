@@ -1,5 +1,3 @@
-//go:build !race
-
 package manager
 
 import (
@@ -35,23 +33,6 @@ var matrixTypes = []struct {
 
 var errCaptcha = errors.New("captcha required")
 
-// matrixParallel limits the number of expensive matrix scenarios that can
-// initialize encrypted sessions at once. Each session may derive one or more
-// scrypt keys (32 MiB per derivation), and running the full matrix at the
-// testing package's unrestricted parallelism can starve the scheduler under
-// -race and turn a test failure into the package's 10-minute timeout.
-var matrixParallel = make(chan struct{}, 8)
-
-func acquireMatrixSlot(t *testing.T) {
-	t.Helper()
-	select {
-	case matrixParallel <- struct{}{}:
-		t.Cleanup(func() { <-matrixParallel })
-	case <-time.After(30 * time.Second):
-		t.Fatal("timed out waiting for matrix test slot")
-	}
-}
-
 // wire is one fake carrier shared by a client and an exit, like a document
 // both attach to. Its exit side can be stuck behind a check until it is
 // given a "spravka" cookie, the way a Yandex transport on a flagged IP is.
@@ -78,7 +59,7 @@ type wireEnd struct {
 	cb      func([]byte)
 	started bool
 	jar     map[string]string
-	notify  func(err error, name, url, reason string)
+	notify  func(err error, name, url, html, reason string)
 	done    chan struct{}
 }
 
@@ -140,7 +121,7 @@ func (e *wireEnd) report() {
 	n := e.notify
 	e.mu.Unlock()
 	if n != nil {
-		n(errCaptcha, e.w.name, "https://"+e.w.name+".example/check", "smartcaptcha")
+		n(errCaptcha, e.w.name, "https://"+e.w.name+".example/check", "", "smartcaptcha")
 	}
 }
 
@@ -206,7 +187,7 @@ func (e *wireEnd) Stats() transport.TransportStats {
 	return transport.TransportStats{Connected: e.IsConnected()}
 }
 
-func (e *wireEnd) SetErrorNotifier(f func(err error, name, url, reason string)) {
+func (e *wireEnd) SetErrorNotifier(f func(err error, name, url, html, reason string)) {
 	e.mu.Lock()
 	e.notify = f
 	e.mu.Unlock()
@@ -306,7 +287,7 @@ func startPair(t *testing.T, o pairOpts) *pair {
 			p.exit = m
 		} else {
 			p.client = m
-			m.SetRemoteAuthNotifier(func(name, url, reason string) {
+			m.SetRemoteAuthNotifier(func(name, url, html, reason string) {
 				p.asked <- [3]string{name, url, reason}
 			})
 		}
@@ -411,7 +392,6 @@ func TestMatrixEveryCombination(t *testing.T) {
 		}
 		t.Run(subsetName(types), func(t *testing.T) {
 			t.Parallel()
-			acquireMatrixSlot(t)
 			p := startPair(t, pairOpts{types: types})
 			p.roundTrip(t, 3*time.Second, "up")
 			for k, ix := range types[:len(types)-1] {
@@ -452,7 +432,6 @@ func TestMatrixAuthRelay(t *testing.T) {
 				name := fmt.Sprintf("%s-stuck/via-%s/%s", st.name, matrixTypes[ri].name, mode)
 				t.Run(name, func(t *testing.T) {
 					t.Parallel()
-					acquireMatrixSlot(t)
 					relay := matrixTypes[ri].name
 					start := time.Now()
 					p := startPair(t, pairOpts{types: types, stuck: st.name, blackhole: blackhole})
