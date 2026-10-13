@@ -20,13 +20,13 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/typeoftypes/OpenFlux2/transport"
-	"github.com/typeoftypes/OpenFlux2/transport/stealth"
 	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
 const (
 	boardsBase = "boards.yandex.ru"
-	var boardsProfile = stealth.Desktop()
+	boardsUA   = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 " +
+		"(KHTML, like Gecko) Chrome/153.0.0.0 Mobile Safari/537.36"
 	boardsSocketHostDefault = "socket33.boards.yandex.ru"
 
 	// Heartbeat. Сервер шлёт engine.io ping "2" (pingInterval=25000,
@@ -214,7 +214,7 @@ var errCaptchaRequired = fmt.Errorf("captcha required")
 // возвращает errCaptchaRequired.
 func (t *BoardsTransport) getAllowCaptcha(client *http.Client, u, hash string) error {
 	req, _ := http.NewRequest("GET", u, nil)
-	stealth.ApplyHTTP(req.Header, boardsProfile, "", "")
+	req.Header.Set("User-Agent", boardsUA)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	req.Header.Set("Referer", "https://"+boardsBase+"/guest/?hash="+hash)
@@ -252,7 +252,7 @@ func (t *BoardsTransport) authorize(hash, name string) (boardsInfo, error) {
 	if err := t.getAllowCaptcha(client, docURL, hash); err != nil {
 		if err == errCaptchaRequired {
 			utils.Debugf("[BOARDS] captcha required, solving...")
-			if _, cerr := solveCaptcha(docURL, jar, boardsProfile.UserAgent); cerr != nil {
+			if _, cerr := solveCaptcha(docURL, jar, boardsUA); cerr != nil {
 				return boardsInfo{}, fmt.Errorf("captcha solve: %w", cerr)
 			}
 			utils.Debugf("[BOARDS] captcha solved, re-fetching whiteboard")
@@ -321,7 +321,7 @@ func apiRequest(hash, action string, content interface{}) *http.Request {
 		"content": base64.StdEncoding.EncodeToString(raw),
 	})
 	req, _ := http.NewRequest("POST", "https://"+boardsBase+"/api", bytes.NewReader(body))
-	stealth.ApplyHTTP(req.Header, boardsProfile, "", "")
+	req.Header.Set("User-Agent", boardsUA)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("Accept", "application/json, text/javascript, */*; q=0.01")
@@ -490,7 +490,7 @@ func (t *BoardsTransport) connectAndServe(info boardsInfo) error {
 	wsURL := fmt.Sprintf("wss://%s/socket.io/?EIO=4&transport=websocket", info.wsHost)
 
 	header := http.Header{}
-	stealth.ApplyWS(header, boardsProfile, "")
+	header.Set("User-Agent", boardsUA)
 	header.Set("Origin", "https://"+boardsBase)
 	header.Set("Accept-Language", "en-US,en;q=0.9")
 
@@ -684,8 +684,8 @@ func (t *BoardsTransport) sendSubscribe(sess *boardsSession, participant string)
 				"cookies":             true,
 				"flashVersion":        "no check",
 				"agent":               "Chrome",
-				"appVersion":          boardsProfile.UserAgent,
-				"userAgent":           boardsProfile.UserAgent,
+				"appVersion":          boardsUA,
+				"userAgent":           boardsUA,
 				"appName":             "Netscape",
 				"platform":            "MacIntel",
 			},

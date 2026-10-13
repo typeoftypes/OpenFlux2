@@ -702,8 +702,6 @@ func (t *MailruDocsTransport) fetchDocInfo(weblink string) (MailruDocsInfo, erro
 		editorUserID, _ = userObj["id"].(string)
 	}
 
-	// Always WSS: Mail.ru docs edge rejects plain ws:// and some API
-	// responses still advertise http:// or ws:// bases.
 	wsBase := forceWSS(apiBase)
 	wsURL := fmt.Sprintf("%s/doc/%s/c/?EIO=4&transport=websocket", wsBase, docKey)
 
@@ -795,8 +793,6 @@ func forceWSS(apiBase string) string {
 	case apiBase == "":
 		return "wss://docs.datacloudmail.ru"
 	default:
-		// host-only or path — assume TLS
 		return "wss://" + strings.TrimPrefix(apiBase, "//")
 	}
 }
-

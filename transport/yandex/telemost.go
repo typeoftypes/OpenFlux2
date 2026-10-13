@@ -35,7 +35,6 @@ import (
 	"github.com/pion/webrtc/v4"
 
 	"github.com/typeoftypes/OpenFlux2/transport"
-	"github.com/typeoftypes/OpenFlux2/transport/stealth"
 	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
@@ -56,8 +55,7 @@ func init() {
 	}
 }
 
-var telemostProfile.UserAgentProfile = stealth.Desktop()
-
+const telemostUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36"
 
 func roleStr(isExitNode bool) string {
 	if isExitNode {
@@ -345,7 +343,7 @@ func (t *TelemostTransport) getConnectionInfo() error {
 	req.Header.Set("Sec-Fetch-Dest", "empty")
 	req.Header.Set("Sec-Fetch-Mode", "cors")
 	req.Header.Set("Sec-Fetch-Site", "same-site")
-	stealth.ApplyHTTP(req.Header, telemostProfile, "", "")
+	req.Header.Set("User-Agent", telemostUserAgent)
 	req.Header.Set("X-Telemost-Client-Version", "211.2.0")
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("idempotency-key", t.idempotencyKey)
@@ -394,7 +392,7 @@ func (t *TelemostTransport) connectWS(attempt int) {
 			}
 		}()
 		headers := http.Header{}
-		stealth.ApplyWS(headers, telemostProfile, "")
+		headers.Set("User-Agent", telemostUserAgent)
 		headers.Set("Origin", "https://telemost.yandex.ru")
 		utils.Debugf("[Telemost] WS dial -> %s", t.mediaServerURL)
 		conn, resp, err := websocket.DefaultDialer.Dial(t.mediaServerURL, headers)
@@ -715,7 +713,7 @@ func (t *TelemostTransport) sendHello() error {
 			SDKInfo: map[string]interface{}{
 				"implementation": "browser",
 				"version":        "6.2.1",
-				"userAgent":      telemostProfile.UserAgent,
+				"userAgent":      telemostUserAgent,
 				"hwConcurrency":  10,
 			},
 			SDKInitializationID: uuid.New().String(),
