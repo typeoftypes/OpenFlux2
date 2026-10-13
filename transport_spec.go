@@ -5,9 +5,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/p1neappleXpress/OpenFlux/transport"
-	"github.com/p1neappleXpress/OpenFlux/transport/control"
-	"github.com/p1neappleXpress/OpenFlux/transport/manager"
+	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/typeoftypes/OpenFlux2/transport/control"
+	"github.com/typeoftypes/OpenFlux2/transport/manager"
 )
 
 // transportSpec is one entry from --transports plus its per-type URL/params.

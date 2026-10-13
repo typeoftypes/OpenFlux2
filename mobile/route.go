@@ -4,7 +4,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/typeoftypes/OpenFlux2/transport"
 )
 
 // route tracks which carrier the running connection uses, for the UI.

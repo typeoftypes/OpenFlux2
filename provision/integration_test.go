@@ -356,7 +356,7 @@ func (f *fakeReleases) prerelease(tag string, core []byte) {
 func (f *fakeReleases) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	const repo = "/p1neappleXpress/OpenFlux/"
+	const repo = "/typeoftypes/OpenFlux2/"
 	p := r.URL.Path
 	switch {
 	case p == "/repos"+repo+"releases":

@@ -5,7 +5,7 @@ package provision
 // keeps the hash in step with deploy/node-install.sh; when the script
 // changes, commit it, then point PinnedCommit at that commit.
 const (
-	PinnedRepo   = "p1neappleXpress/OpenFlux"
+	PinnedRepo   = "typeoftypes/OpenFlux2"
 	PinnedCommit = "3459bfdf73be83b1128865de8737deb009ce0e7e"
 	PinnedSHA256 = "8a75cfd72a642a464d8d2e871172bcf37b1241d0d37e9323568557d3033f250f"
 )

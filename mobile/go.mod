@@ -3,7 +3,7 @@ module openflux-mobile
 go 1.26.6
 
 require (
-	github.com/p1neappleXpress/OpenFlux v0.0.0
+	github.com/typeoftypes/OpenFlux2 v0.0.0
 	golang.org/x/net v0.59.0
 )
 
@@ -50,6 +50,6 @@ require (
 	gvisor.dev/gvisor v0.0.0-20260530041128-23ef90c42be7 // indirect
 )
 
-replace github.com/p1neappleXpress/OpenFlux => ..
+replace github.com/typeoftypes/OpenFlux2 => ..
 
 tool golang.org/x/mobile/cmd/gobind

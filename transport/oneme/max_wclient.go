@@ -1,5 +1,8 @@
 package oneme
 
+// browser identity for this process
+var maxProfile = stealth.Desktop()
+
 import (
 	"encoding/json"
 	"fmt"
@@ -7,12 +10,13 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/typeoftypes/OpenFlux2/transport/stealth"
 )
 
 const (
 	WS_HOST     = "wss://ws-api.oneme.ru/websocket"
 	RPC_VERSION = 11
-	USER_AGENT  = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+	USER_AGENT = ""
 )
 
 func NewMaxClient() *MaxClient {
@@ -27,7 +31,8 @@ func (c *MaxClient) Connect() error {
 	defer c.mu.Unlock()
 	header := http.Header{}
 	header.Set("Origin", "https://web.max.ru")
-	header.Set("User-Agent", USER_AGENT)
+	stealth.ApplyWS(header, maxProfile, "")
+	header.Set("User-Agent", maxProfile.UserAgent)
 	conn, _, err := websocket.DefaultDialer.Dial(WS_HOST, header)
 	if err != nil {
 		return err

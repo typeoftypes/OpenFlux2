@@ -24,10 +24,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/p1neappleXpress/OpenFlux/provision"
-	"github.com/p1neappleXpress/OpenFlux/provision/phphost"
-	"github.com/p1neappleXpress/OpenFlux/transport/cupsonline"
-	"github.com/p1neappleXpress/OpenFlux/transport/yandex"
+	"github.com/typeoftypes/OpenFlux2/provision"
+	"github.com/typeoftypes/OpenFlux2/provision/phphost"
+	"github.com/typeoftypes/OpenFlux2/transport/cupsonline"
+	"github.com/typeoftypes/OpenFlux2/transport/yandex"
 )
 
 type wizardRequest struct {

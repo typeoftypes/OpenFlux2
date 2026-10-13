@@ -1,5 +1,7 @@
 package yandex
 
+var yandexDocProfile = stealth.Desktop()
+
 import (
 	"bytes"
 	"compress/gzip"
@@ -15,7 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/p1neappleXpress/OpenFlux/utils"
+	"github.com/typeoftypes/OpenFlux2/utils"
+	"github.com/typeoftypes/OpenFlux2/transport/stealth"
 )
 
 // solveCaptcha проходит Яндекс-капчу (blink-check) для заданного URL.
@@ -37,7 +40,7 @@ func solveCaptcha(docURL string, jar http.CookieJar, userAgent string) (string, 
 		return "", fmt.Errorf("captcha: nil cookiejar")
 	}
 	if userAgent == "" {
-		userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:153.0) Gecko/20100101 Firefox/153.0"
+		userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:144.0) Gecko/20100101 Firefox/144.0"
 	}
 
 	client := &http.Client{

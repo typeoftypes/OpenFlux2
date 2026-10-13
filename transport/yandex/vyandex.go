@@ -21,8 +21,9 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/p1neappleXpress/OpenFlux/transport"
-	"github.com/p1neappleXpress/OpenFlux/utils"
+	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/typeoftypes/OpenFlux2/transport/stealth"
+	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
 type VolgaConfig struct {
@@ -105,7 +106,8 @@ func SlimVolgaConfig() VolgaConfig {
 	return c
 }
 
-const volgaUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:153.0) Gecko/20100101 Firefox/153.0"
+var volgaProfile = stealth.Desktop()
+
 
 var reClientConfig = regexp.MustCompile(`<script[^>]*id="client-config"[^>]*>(.*?)</script>`)
 
@@ -199,7 +201,7 @@ func authorizeWithJar(docURL string, jar http.CookieJar) (*volgaAuth, error) {
 
 	for i := 0; i < 15; i++ {
 		req, _ := http.NewRequest("GET", currentURL, nil)
-		req.Header.Set("User-Agent", volgaUserAgent)
+		stealth.ApplyHTTP(req.Header, volgaProfile, "", "")
 		req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9")
 		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 		if i > 0 {
@@ -239,7 +241,7 @@ func authorizeWithJar(docURL string, jar http.CookieJar) (*volgaAuth, error) {
 
 			if strings.Contains(loc, "showcaptchafast") {
 				utils.Debugf("[VOLGA] captcha required, solving...")
-				if _, cerr := solveCaptcha(docURL, jar, volgaUserAgent); cerr != nil {
+				if _, cerr := solveCaptcha(docURL, jar, volgaProfile.UserAgent); cerr != nil {
 					return nil, fmt.Errorf("captcha solve: %w", cerr)
 				}
 				utils.Debugf("[VOLGA] captcha solved, retrying from %s", docURL)
@@ -326,7 +328,7 @@ func authorizeWithJar(docURL string, jar http.CookieJar) (*volgaAuth, error) {
 	utils.Debugf("[VOLGA] POST %s (body %d bytes)", actionURL, len(body))
 
 	req2, _ := http.NewRequest("POST", actionURL, strings.NewReader(body))
-	req2.Header.Set("User-Agent", volgaUserAgent)
+	stealth.ApplyHTTP(req2.Header, volgaProfile, "", "")
 	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req2.Header.Set("Origin", "https://disk.yandex.ru")
 	req2.Header.Set("Referer", finalURL)
@@ -392,7 +394,7 @@ func authorizeWithJar(docURL string, jar http.CookieJar) (*volgaAuth, error) {
 	}
 
 	req3, _ := http.NewRequest("GET", location, nil)
-	req3.Header.Set("User-Agent", volgaUserAgent)
+	stealth.ApplyHTTP(req3.Header, volgaProfile, "", "")
 	req3.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req3.Header.Set("Referer", actionURL)
 	resp3, err := session.Do(req3)
@@ -751,7 +753,7 @@ func (r *relayClient) sendBatch(batch [][]byte) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", volgaUserAgent)
+	stealth.ApplyHTTP(req.Header, volgaProfile, "", "")
 	req.Header.Set("Authorization", "Bearer "+auth.Token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "https://volga.yandex.ru")
@@ -954,7 +956,7 @@ func (w *wsListener) connect() error {
 		"&x_request_attempt=0"
 
 	header := http.Header{}
-	header.Set("User-Agent", volgaUserAgent)
+	stealth.ApplyWS(header, volgaProfile, "")
 	header.Set("Origin", "https://volga.yandex.ru")
 
 	var cookieParts []string

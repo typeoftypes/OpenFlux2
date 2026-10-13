@@ -1,11 +1,11 @@
 package main
 
 import (
-	"github.com/p1neappleXpress/OpenFlux/transport"
-	"github.com/p1neappleXpress/OpenFlux/transport/ipc"
-	"github.com/p1neappleXpress/OpenFlux/transport/manager"
-	"github.com/p1neappleXpress/OpenFlux/transport/script"
-	"github.com/p1neappleXpress/OpenFlux/utils"
+	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/typeoftypes/OpenFlux2/transport/ipc"
+	"github.com/typeoftypes/OpenFlux2/transport/manager"
+	"github.com/typeoftypes/OpenFlux2/transport/script"
+	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
 // localCheckRequest is what the app is asked when one of this process's own

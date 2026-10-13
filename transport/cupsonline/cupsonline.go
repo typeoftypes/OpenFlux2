@@ -20,9 +20,10 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/p1neappleXpress/OpenFlux/netbind"
-	"github.com/p1neappleXpress/OpenFlux/transport"
-	"github.com/p1neappleXpress/OpenFlux/utils"
+	"github.com/typeoftypes/OpenFlux2/netbind"
+	"github.com/typeoftypes/OpenFlux2/transport/stealth"
+	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
 // baseRoomURL is where the rooms live. It's a variable only so tests can aim
@@ -38,7 +39,9 @@ func SetBaseRoomURL(u string) (restore func()) {
 	return func() { baseRoomURL = old }
 }
 
-const cupsUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+var cupsProfile = stealth.Desktop()
+
+func cupsUA() string { return cupsProfile.UserAgent }
 
 type CupsonlineConfig struct {
 	WSHandshakeTimeout  time.Duration
@@ -185,7 +188,7 @@ func authorize(ctx context.Context, roomURL string, session *http.Client) (*cups
 	}
 
 	req, _ := http.NewRequestWithContext(ctx, "GET", roomURL, nil)
-	req.Header.Set("User-Agent", cupsUA)
+	stealth.ApplyHTTP(req.Header, cupsProfile, "", "")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9")
 
@@ -231,7 +234,7 @@ func authorize(ctx context.Context, roomURL string, session *http.Client) (*cups
 
 	subBody, _ := json.Marshal(map[string]string{"channel": a.channel})
 	req2, _ := http.NewRequestWithContext(ctx, "POST", a.subURL, bytes.NewReader(subBody))
-	req2.Header.Set("User-Agent", cupsUA)
+	stealth.ApplyHTTP(req2.Header, cupsProfile, "", "")
 	req2.Header.Set("Content-Type", "application/json")
 	req2.Header.Set("X-CSRFToken", a.csrfToken)
 	req2.Header.Set("Origin", originOf(roomURL))
@@ -726,7 +729,7 @@ func (w *cupsWS) connectAndServe() error {
 
 	header := http.Header{}
 	header.Set("Origin", originOf(a.connURL))
-	header.Set("User-Agent", cupsUA)
+	stealth.ApplyWS(header, cupsProfile, "")
 	for _, c := range a.httpClient.Jar.Cookies(mustParseURL(a.connURL)) {
 		header.Add("Cookie", c.Name+"="+c.Value)
 	}

@@ -24,9 +24,9 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/p1neappleXpress/OpenFlux/netbind"
-	"github.com/p1neappleXpress/OpenFlux/transport"
-	"github.com/p1neappleXpress/OpenFlux/utils"
+	"github.com/typeoftypes/OpenFlux2/netbind"
+	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
 // Mail.ru rejects the old Chrome/137 UA on the WebSocket upgrade with HTTP 409
@@ -702,7 +702,9 @@ func (t *MailruDocsTransport) fetchDocInfo(weblink string) (MailruDocsInfo, erro
 		editorUserID, _ = userObj["id"].(string)
 	}
 
-	wsBase := strings.Replace(apiBase, "https://", "wss://", 1)
+	// Always WSS: Mail.ru docs edge rejects plain ws:// and some API
+	// responses still advertise http:// or ws:// bases.
+	wsBase := forceWSS(apiBase)
 	wsURL := fmt.Sprintf("%s/doc/%s/c/?EIO=4&transport=websocket", wsBase, docKey)
 
 	return MailruDocsInfo{
@@ -777,3 +779,24 @@ func (t *MailruDocsTransport) ApplyCookies(values map[string]string) error {
 	}
 	return nil
 }
+
+// forceWSS maps http/https/ws API bases to wss:// (docs.datacloudmail.ru requires TLS).
+func forceWSS(apiBase string) string {
+	apiBase = strings.TrimSpace(apiBase)
+	switch {
+	case strings.HasPrefix(apiBase, "wss://"):
+		return apiBase
+	case strings.HasPrefix(apiBase, "ws://"):
+		return "wss://" + strings.TrimPrefix(apiBase, "ws://")
+	case strings.HasPrefix(apiBase, "https://"):
+		return "wss://" + strings.TrimPrefix(apiBase, "https://")
+	case strings.HasPrefix(apiBase, "http://"):
+		return "wss://" + strings.TrimPrefix(apiBase, "http://")
+	case apiBase == "":
+		return "wss://docs.datacloudmail.ru"
+	default:
+		// host-only or path — assume TLS
+		return "wss://" + strings.TrimPrefix(apiBase, "//")
+	}
+}
+

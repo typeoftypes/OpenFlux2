@@ -7,8 +7,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "1.2.0"
-    CURRENT_PROJECT_VERSION: "97"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "17"
     DEVELOPMENT_TEAM: "8GQH8GQ252"
 
 targets:
@@ -29,7 +29,6 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
-        NSCameraUsageDescription: "Сканирование QR-кода конфигурации для добавления профиля."
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
@@ -41,10 +40,6 @@ targets:
       properties:
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
-        # Shared with the tunnel extension so the encryption secret lives in the
-        # Keychain instead of the VPN provider configuration.
-        keychain-access-groups:
-          - $(AppIdentifierPrefix)com.p1neapplexpress-saharev.openflux
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.p1neapplexpress-saharev.openflux
@@ -72,9 +67,6 @@ targets:
     platform: iOS
     sources:
       - path: OpenFluxTunnel
-      # Shared with the app: the extension reads the encryption secret from the
-      # same Keychain group, so it needs the same accessor.
-      - path: OpenFlux/Secrets.swift
       - path: Lib
         buildPhase: none
     dependencies:
@@ -94,8 +86,6 @@ targets:
       properties:
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
-        keychain-access-groups:
-          - $(AppIdentifierPrefix)com.p1neapplexpress-saharev.openflux
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.p1neapplexpress-saharev.openflux.tunnel

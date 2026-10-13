@@ -1,7 +1,7 @@
 package yandex
 
 import (
-	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/typeoftypes/OpenFlux2/transport"
 )
 
 var _ transport.CookieExchanger = (*YandexDocsTransport)(nil)
