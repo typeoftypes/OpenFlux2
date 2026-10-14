@@ -38,7 +38,7 @@ func SetBaseRoomURL(u string) (restore func()) {
 	return func() { baseRoomURL = old }
 }
 
-const cupsUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+const cupsUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
 
 type CupsonlineConfig struct {
 	WSHandshakeTimeout  time.Duration
@@ -112,18 +112,16 @@ func DefaultCupsonlineConfig() CupsonlineConfig {
 		RoomGoneRetryMax: 30 * time.Minute,
 
 		BatchMaxPackets: 256,
-		BatchMaxBytes:   11000,
-		// 4096 байт данных → 2 байта заголовка → ~342 курсора → провод ~17 KB,
-		// с запасом под проверенными ~21 KB и вчетверо меньше потолка.
-		MaxMessageData: 4096,
+		BatchMaxBytes:   22000,
+		// 8192 байт данных → 2 байта заголовка → ~684 курсора → провод ~34 KB;
+		// проверено: сервер принимает без ошибок.
+		MaxMessageData: 8192,
 		MaxCursors:     1000,
 		BatchTimeout:   2 * time.Millisecond,
-		// 18ms (~55 msg/s per channel) — calibrated against the live server
-		// (TestLiveThroughputCalibrate): the knee of throughput (~80 KB/s per
-		// channel; faster doesn't help, the server itself is the ceiling) with
-		// no reconnects and margin under the burst that stalled the old,
-		// unpaced code.
-		SendInterval: 18 * time.Millisecond,
+		// 12ms (~83 msg/s per channel) — calibrated by bench_tune.py:
+		// 8192B@12ms = 447 KB/s per lane (2.8× vs old 4096@18ms=159 KB/s);
+		// 10ms triggers 403.
+		SendInterval: 12 * time.Millisecond,
 
 		// В очереди кадры кодека (до ~8 KB), а не IP-пакеты: очередь длиннее
 		// — это уже не буфер, а секунды задержки.
@@ -720,13 +718,18 @@ func (w *cupsWS) markAlive() {
 
 func (w *cupsWS) connectAndServe() error {
 	a := w.auth()
-	wsURL := strings.Replace(a.connURL, "https://", "wss://", 1)
-	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
+	wsURL := forceWSSCups(a.connURL)
 	wsURL = strings.TrimRight(wsURL, "/") + "/websocket"
 
 	header := http.Header{}
 	header.Set("Origin", originOf(a.connURL))
 	header.Set("User-Agent", cupsUA)
+	header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+	header.Set("Cache-Control", "no-cache")
+	header.Set("Pragma", "no-cache")
+	header.Set("Sec-Fetch-Dest", "websocket")
+	header.Set("Sec-Fetch-Mode", "websocket")
+	header.Set("Sec-Fetch-Site", "same-site")
 	for _, c := range a.httpClient.Jar.Cookies(mustParseURL(a.connURL)) {
 		header.Add("Cookie", c.Name+"="+c.Value)
 	}
@@ -1585,4 +1588,21 @@ func (t *CupsonlineTransport) ApplyCookies(values map[string]string) error {
 		}
 	}
 	return nil
+}
+
+
+func forceWSSCups(base string) string {
+	base = strings.TrimSpace(base)
+	switch {
+	case strings.HasPrefix(base, "wss://"):
+		return base
+	case strings.HasPrefix(base, "ws://"):
+		return "wss://" + strings.TrimPrefix(base, "ws://")
+	case strings.HasPrefix(base, "https://"):
+		return "wss://" + strings.TrimPrefix(base, "https://")
+	case strings.HasPrefix(base, "http://"):
+		return "wss://" + strings.TrimPrefix(base, "http://")
+	default:
+		return "wss://" + strings.TrimPrefix(base, "//")
+	}
 }
