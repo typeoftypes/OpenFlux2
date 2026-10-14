@@ -1,4 +1,4 @@
-module github.com/p1neappleXpress/OpenFlux
+module github.com/typeoftypes/OpenFlux2
 
 go 1.26.6
 
@@ -26,7 +26,6 @@ require (
 	github.com/pion/sdp/v3 v3.0.20
 	github.com/pion/webrtc/v4 v4.2.22
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
-	github.com/typeoftypes/OpenFlux2 v0.0.0-20261014201305-d643c8de76ff
 	github.com/xjasonlyu/windivert-go v0.0.0-20201010013527-4239d0afa76f
 	golang.org/x/crypto v0.56.0
 	golang.org/x/net v0.57.0
@@ -52,3 +51,5 @@ require (
 	golang.org/x/text v0.41.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 )
+
+replace github.com/typeoftypes/OpenFlux2 => .
