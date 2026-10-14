@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/p1neappleXpress/OpenFlux/transport/script"
+	"github.com/typeoftypes/OpenFlux2/transport/script"
 )
 
 // runInspectScript is the desktop apps' way into transport/script.InspectTrust:

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"syscall/js"
 
-	"github.com/p1neappleXpress/OpenFlux/share"
+	"github.com/typeoftypes/OpenFlux2/share"
 )
 
 // qr answers {"rows":["0110..",..]} (1 = dark module, quiet zone included)

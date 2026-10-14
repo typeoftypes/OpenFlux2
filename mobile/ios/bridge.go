@@ -32,8 +32,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/p1neappleXpress/OpenFlux/transport"
-	"github.com/p1neappleXpress/OpenFlux/utils"
+	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/typeoftypes/OpenFlux2/utils"
 	mobile "openflux-mobile"
 )
 

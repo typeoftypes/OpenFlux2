@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/p1neappleXpress/OpenFlux/network"
-	"github.com/p1neappleXpress/OpenFlux/utils"
+	"github.com/typeoftypes/OpenFlux2/network"
+	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
 // The stream mode logs by the same rules as the packet modes (see utils/logging.go):

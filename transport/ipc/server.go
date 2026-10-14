@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/p1neappleXpress/OpenFlux/utils"
+	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
 // Handler receives decoded messages from the connected client.

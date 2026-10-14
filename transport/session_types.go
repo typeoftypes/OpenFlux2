@@ -3,7 +3,7 @@ package transport
 import (
 	"errors"
 
-	"github.com/p1neappleXpress/OpenFlux/transport/control"
+	"github.com/typeoftypes/OpenFlux2/transport/control"
 )
 
 // MaxNegotiatedPacket leaves space for the envelope and AES overhead in a

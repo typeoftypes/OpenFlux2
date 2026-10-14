@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/p1neappleXpress/OpenFlux/transport"
-	"github.com/p1neappleXpress/OpenFlux/transport/control"
-	"github.com/p1neappleXpress/OpenFlux/utils"
+	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/typeoftypes/OpenFlux2/transport/control"
+	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
 // Factory builds a raw transport from a control.TransportConfig.

@@ -8,7 +8,7 @@ package main
 import "C"
 
 import (
-	"github.com/p1neappleXpress/OpenFlux/share"
+	"github.com/typeoftypes/OpenFlux2/share"
 	mobile "openflux-mobile"
 )
 

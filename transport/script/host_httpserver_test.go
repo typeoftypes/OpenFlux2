@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/typeoftypes/OpenFlux2/transport"
 )
 
 // httpServerScript starts a loopback server from open() and reports its

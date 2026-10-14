@@ -18,7 +18,7 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
 
-	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/typeoftypes/OpenFlux2/transport"
 )
 
 // A Telemost-like carrier in memory, to run the real TCP of the tunnel over

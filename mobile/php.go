@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/p1neappleXpress/OpenFlux/provision/phphost"
+	"github.com/typeoftypes/OpenFlux2/provision/phphost"
 )
 
 // Putting the PHP exit on a free web host, for the apps' "own node without a

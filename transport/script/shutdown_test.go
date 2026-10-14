@@ -10,7 +10,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/typeoftypes/OpenFlux2/transport"
 )
 
 func startScript(t *testing.T, src string) *ScriptTransport {

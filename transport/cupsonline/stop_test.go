@@ -3,7 +3,7 @@ package cupsonline
 import (
 	"testing"
 
-	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/typeoftypes/OpenFlux2/transport"
 )
 
 // A Session stops a carrier through every wrapper around it; the second

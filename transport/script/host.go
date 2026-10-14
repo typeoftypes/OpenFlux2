@@ -22,8 +22,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pierrec/lz4/v4"
 
-	"github.com/p1neappleXpress/OpenFlux/netbind"
-	"github.com/p1neappleXpress/OpenFlux/utils"
+	"github.com/typeoftypes/OpenFlux2/netbind"
+	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
 // registerHostAPI injects the host surface into a freshly created runtime.

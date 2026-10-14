@@ -7,7 +7,7 @@ import (
 	"net"
 	"os"
 
-	"github.com/p1neappleXpress/OpenFlux/share"
+	"github.com/typeoftypes/OpenFlux2/share"
 )
 
 // roomLister is a transport whose address for clients exists only once it

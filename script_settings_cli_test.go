@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/p1neappleXpress/OpenFlux/transport/script"
+	"github.com/typeoftypes/OpenFlux2/transport/script"
 )
 
 func TestScriptSettingsCLI(t *testing.T) {

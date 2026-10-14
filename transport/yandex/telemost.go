@@ -34,8 +34,8 @@ import (
 	"github.com/pion/sdp/v3"
 	"github.com/pion/webrtc/v4"
 
-	"github.com/p1neappleXpress/OpenFlux/transport"
-	"github.com/p1neappleXpress/OpenFlux/utils"
+	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
 var (

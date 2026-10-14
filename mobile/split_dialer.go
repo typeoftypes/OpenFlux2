@@ -5,7 +5,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/p1neappleXpress/OpenFlux/socks5"
+	"github.com/typeoftypes/OpenFlux2/socks5"
 )
 
 // splitDialer wraps another socks5.Dialer (the encrypted TCPTunnel) and
