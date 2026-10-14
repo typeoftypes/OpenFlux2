@@ -17,11 +17,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/typeoftypes/OpenFlux2/provision"
-	"github.com/typeoftypes/OpenFlux2/transport"
-	"github.com/typeoftypes/OpenFlux2/transport/cupsonline"
-	"github.com/typeoftypes/OpenFlux2/transport/yandex"
-	"github.com/typeoftypes/OpenFlux2/tunnel"
+	"github.com/p1neappleXpress/OpenFlux/provision"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport/cupsonline"
+	"github.com/p1neappleXpress/OpenFlux/transport/yandex"
+	"github.com/p1neappleXpress/OpenFlux/tunnel"
 )
 
 var node struct {

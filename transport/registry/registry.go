@@ -14,13 +14,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/typeoftypes/OpenFlux2/transport"
-	"github.com/typeoftypes/OpenFlux2/transport/avito"
-	"github.com/typeoftypes/OpenFlux2/transport/cupsonline"
-	"github.com/typeoftypes/OpenFlux2/transport/mailru"
-	"github.com/typeoftypes/OpenFlux2/transport/oneme"
-	"github.com/typeoftypes/OpenFlux2/transport/script"
-	"github.com/typeoftypes/OpenFlux2/transport/yandex"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport/avito"
+	"github.com/p1neappleXpress/OpenFlux/transport/cupsonline"
+	"github.com/p1neappleXpress/OpenFlux/transport/mailru"
+	"github.com/p1neappleXpress/OpenFlux/transport/oneme"
+	"github.com/p1neappleXpress/OpenFlux/transport/script"
+	"github.com/p1neappleXpress/OpenFlux/transport/yandex"
 )
 
 // Options is what differs between the callers; the type, url and params are

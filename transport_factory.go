@@ -3,10 +3,10 @@ package main
 import (
 	"fmt"
 
-	"github.com/typeoftypes/OpenFlux2/transport"
-	"github.com/typeoftypes/OpenFlux2/transport/control"
-	"github.com/typeoftypes/OpenFlux2/transport/manager"
-	"github.com/typeoftypes/OpenFlux2/transport/registry"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport/control"
+	"github.com/p1neappleXpress/OpenFlux/transport/manager"
+	"github.com/p1neappleXpress/OpenFlux/transport/registry"
 )
 
 // yandexCookiesFile is --yandex-cookies-file: a Netscape cookies.txt with

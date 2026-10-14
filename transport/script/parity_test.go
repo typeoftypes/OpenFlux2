@@ -10,8 +10,8 @@ import (
 
 	"github.com/dop251/goja"
 
-	"github.com/typeoftypes/OpenFlux2/transport/mailru"
-	"github.com/typeoftypes/OpenFlux2/transport/yandex"
+	"github.com/p1neappleXpress/OpenFlux/transport/mailru"
+	"github.com/p1neappleXpress/OpenFlux/transport/yandex"
 )
 
 // Parity between a native transport and its JS port. The pure seams (message

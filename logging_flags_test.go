@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport"
 	"reflect"
 	"testing"
 )

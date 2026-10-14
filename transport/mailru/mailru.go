@@ -209,6 +209,10 @@ func NewMailruDocsTransport(weblink string, config transport.TransportConfig) *M
 
 func normalizeWeblink(weblink string) string {
 	weblink = strings.TrimSpace(weblink)
+	// Strip query/fragment from full URLs users paste from the browser.
+	if i := strings.IndexAny(weblink, "?#"); i >= 0 {
+		weblink = weblink[:i]
+	}
 	for _, prefix := range []string{
 		"https://cloud.mail.ru/public/",
 		"http://cloud.mail.ru/public/",
@@ -219,8 +223,9 @@ func normalizeWeblink(weblink string) string {
 			return strings.Trim(strings.TrimPrefix(weblink, prefix), "/")
 		}
 	}
-	return weblink
+	return strings.Trim(weblink, "/")
 }
+
 
 func (t *MailruDocsTransport) Start() error {
 	if err := t.BaseTransport.Start(); err != nil {
@@ -674,6 +679,9 @@ func reconnectBackoff(n int) time.Duration {
 
 // fetchDocInfo POSTs to Mail.ru's public-document editor API and parses the
 // response into the fields needed to open the collaborative WebSocket.
+// Warms the cookie jar with a GET of the public page first — some edges
+// answer the bare API call with an HTML interstitial (WAF / region gate),
+// which used to surface as: failed to parse JSON: invalid character '<'.
 func (t *MailruDocsTransport) fetchDocInfo(weblink string) (MailruDocsInfo, error) {
 	t.jarMu.RLock()
 	jar := t.cookieJar
@@ -685,91 +693,137 @@ func (t *MailruDocsTransport) fetchDocInfo(weblink string) (MailruDocsInfo, erro
 			return MailruDocsInfo{}, err
 		}
 	}
-	client := &http.Client{Jar: jar, Timeout: 15 * time.Second}
+	client := &http.Client{Jar: jar, Timeout: 20 * time.Second}
 
-	reqBody := map[string]string{
-		"x-email":  "anonym",
-		"public":   "/" + weblink,
-		"platform": "desktop_web",
-	}
-	jsonData, _ := json.Marshal(reqBody)
-
-	apiURL := "https://cloud.mail.ru/api/v4/r7/edit"
-	utils.Debugf("[M-DOCS] fetchDocInfo POST %s", apiURL)
-
-	req, _ := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/plain, */*")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	ua := t.sessionUA
 	if ua == "" {
 		ua = pickMailruUA()
-	}
-	req.Header.Set("User-Agent", ua)
-	req.Header.Set("X-Api-Version", "4")
-	req.Header.Set("Referer", fmt.Sprintf("https://cloud.mail.ru/public/%s?weblink=%s", weblink, weblink))
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return MailruDocsInfo{}, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return MailruDocsInfo{}, fmt.Errorf("API returned status %d", resp.StatusCode)
+		t.sessionUA = ua
 	}
 
-	bodyBytes, _ := io.ReadAll(resp.Body)
-
-	var res map[string]interface{}
-	if err := json.Unmarshal(bodyBytes, &res); err != nil {
-		return MailruDocsInfo{}, fmt.Errorf("failed to parse JSON: %w", err)
+	// 1) Warm-up GET — establishes cloud.mail.ru cookies like a real browser.
+	pubURL := "https://cloud.mail.ru/public/" + weblink
+	if greq, err := http.NewRequest("GET", pubURL, nil); err == nil {
+		greq.Header.Set("User-Agent", ua)
+		greq.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+		greq.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+		greq.Header.Set("Upgrade-Insecure-Requests", "1")
+		if resp, err := client.Do(greq); err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}
 	}
 
-	apiBase, _ := res["api"].(string)
-	token, _ := res["token"].(string)
+	// 2) POST r7/edit — try desktop_web then mobileweb if HTML/non-JSON.
+	platforms := []string{"desktop_web", "mobileweb"}
+	var lastErr error
+	for _, platform := range platforms {
+		reqBody := map[string]string{
+			"x-email":  "anonym",
+			"public":   "/" + weblink,
+			"platform": platform,
+		}
+		jsonData, _ := json.Marshal(reqBody)
+		apiURL := "https://cloud.mail.ru/api/v4/r7/edit"
+		utils.Debugf("[M-DOCS] fetchDocInfo POST %s platform=%s", apiURL, platform)
 
-	document, ok := res["document"].(map[string]interface{})
-	if !ok || document == nil {
-		return MailruDocsInfo{}, fmt.Errorf("document object missing")
+		req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
+		if err != nil {
+			return MailruDocsInfo{}, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/plain, */*")
+		req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+		req.Header.Set("User-Agent", ua)
+		req.Header.Set("Origin", "https://cloud.mail.ru")
+		req.Header.Set("Referer", fmt.Sprintf("https://cloud.mail.ru/public/%s?weblink=%s", weblink, weblink))
+		req.Header.Set("Sec-Fetch-Dest", "empty")
+		req.Header.Set("Sec-Fetch-Mode", "cors")
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		req.Header.Set("X-Api-Version", "4")
+		req.Header.Set("X-Requested-With", "XMLHttpRequest")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		trim := bytes.TrimSpace(bodyBytes)
+		if len(trim) == 0 {
+			lastErr = fmt.Errorf("API empty body (HTTP %d)", resp.StatusCode)
+			continue
+		}
+		// HTML interstitial / WAF / login page
+		if trim[0] == '<' || bytes.HasPrefix(trim, []byte("<!")) || bytes.Contains(trim, []byte("<html")) {
+			snippet := string(trim)
+			if len(snippet) > 120 {
+				snippet = snippet[:120]
+			}
+			lastErr = fmt.Errorf("API returned HTML instead of JSON (HTTP %d, platform=%s): %s", resp.StatusCode, platform, snippet)
+			utils.Debugf("[M-DOCS] %v", lastErr)
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("API returned status %d", resp.StatusCode)
+			continue
+		}
+
+		var res map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &res); err != nil {
+			lastErr = fmt.Errorf("failed to parse JSON: %w", err)
+			continue
+		}
+
+		apiBase, _ := res["api"].(string)
+		token, _ := res["token"].(string)
+		document, ok := res["document"].(map[string]interface{})
+		if !ok || document == nil {
+			lastErr = fmt.Errorf("document object missing")
+			continue
+		}
+		docKey, _ := document["key"].(string)
+		fileType, _ := document["fileType"].(string)
+		docURL, _ := document["url"].(string)
+		docTitle, _ := document["title"].(string)
+		permissions, _ := document["permissions"].(map[string]interface{})
+		if permissions == nil {
+			permissions = make(map[string]interface{})
+		}
+		editorConfig, ok := res["editorConfig"].(map[string]interface{})
+		if !ok || editorConfig == nil {
+			lastErr = fmt.Errorf("editorConfig object missing")
+			continue
+		}
+		callbackURL, _ := editorConfig["callbackUrl"].(string)
+		userObj, _ := editorConfig["user"].(map[string]interface{})
+		var editorUserID string
+		if userObj != nil {
+			editorUserID, _ = userObj["id"].(string)
+		}
+		wsBase := forceWSS(apiBase)
+		wsURL := fmt.Sprintf("%s/doc/%s/c/?EIO=4&transport=websocket", wsBase, docKey)
+		return MailruDocsInfo{
+			Token:        token,
+			DocKey:       docKey,
+			WsURL:        wsURL,
+			FileType:     fileType,
+			DocURL:       docURL,
+			DocTitle:     docTitle,
+			Permissions:  permissions,
+			CallbackURL:  callbackURL,
+			EditorUserID: editorUserID,
+		}, nil
 	}
-
-	docKey, _ := document["key"].(string)
-	fileType, _ := document["fileType"].(string)
-	docURL, _ := document["url"].(string)
-	docTitle, _ := document["title"].(string)
-	permissions, _ := document["permissions"].(map[string]interface{})
-	if permissions == nil {
-		permissions = make(map[string]interface{})
+	if lastErr == nil {
+		lastErr = fmt.Errorf("fetchDocInfo failed")
 	}
-
-	editorConfig, ok := res["editorConfig"].(map[string]interface{})
-	if !ok || editorConfig == nil {
-		return MailruDocsInfo{}, fmt.Errorf("editorConfig object missing")
-	}
-	callbackURL, _ := editorConfig["callbackUrl"].(string)
-
-	userObj, _ := editorConfig["user"].(map[string]interface{})
-	var editorUserID string
-	if userObj != nil {
-		editorUserID, _ = userObj["id"].(string)
-	}
-
-	wsBase := forceWSS(apiBase)
-	wsURL := fmt.Sprintf("%s/doc/%s/c/?EIO=4&transport=websocket", wsBase, docKey)
-
-	return MailruDocsInfo{
-		Token:        token,
-		DocKey:       docKey,
-		WsURL:        wsURL,
-		FileType:     fileType,
-		DocURL:       docURL,
-		DocTitle:     docTitle,
-		Permissions:  permissions,
-		CallbackURL:  callbackURL,
-		EditorUserID: editorUserID,
-	}, nil
+	return MailruDocsInfo{}, lastErr
 }
+
+
 
 func randUserID() string {
 	return fmt.Sprintf("%010d", rand.New(rand.NewSource(time.Now().UnixNano())).Intn(1000000000))

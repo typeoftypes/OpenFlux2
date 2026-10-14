@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/typeoftypes/OpenFlux2/transport/script"
+	"github.com/p1neappleXpress/OpenFlux/transport/script"
 )
 
 // The desktop's way in: check, apply and roll back an installed script

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/typeoftypes/OpenFlux2/utils"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 type rawBackend struct {

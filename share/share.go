@@ -19,7 +19,7 @@ import (
 
 	qrcode "github.com/skip2/go-qrcode"
 
-	"github.com/typeoftypes/OpenFlux2/utils"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // Prefix starts every link; the path segment is the format version.

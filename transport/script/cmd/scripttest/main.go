@@ -42,9 +42,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/typeoftypes/OpenFlux2/transport"
-	"github.com/typeoftypes/OpenFlux2/transport/script"
-	"github.com/typeoftypes/OpenFlux2/transport/script/devhost"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport/script"
+	"github.com/p1neappleXpress/OpenFlux/transport/script/devhost"
 )
 
 func main() {

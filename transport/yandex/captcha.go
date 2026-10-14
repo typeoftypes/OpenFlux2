@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/typeoftypes/OpenFlux2/utils"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // solveCaptcha проходит Яндекс-капчу (blink-check) для заданного URL.

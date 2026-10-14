@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/typeoftypes/OpenFlux2/transport/control"
+	"github.com/p1neappleXpress/OpenFlux/transport/control"
 )
 
 type recordingExchanger struct {

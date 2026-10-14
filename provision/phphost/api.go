@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/typeoftypes/OpenFlux2/share"
-	"github.com/typeoftypes/OpenFlux2/transport/cupsonline"
+	"github.com/p1neappleXpress/OpenFlux/share"
+	"github.com/p1neappleXpress/OpenFlux/transport/cupsonline"
 )
 
 // Params is every argument of Call, as JSON; each method reads what it needs.

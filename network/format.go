@@ -7,7 +7,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/typeoftypes/OpenFlux2/utils"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 // PacketDirection is the arrow shown before the packet summary.

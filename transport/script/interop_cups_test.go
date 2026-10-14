@@ -17,8 +17,8 @@ import (
 	"github.com/dop251/goja"
 	"github.com/gorilla/websocket"
 
-	"github.com/typeoftypes/OpenFlux2/transport"
-	"github.com/typeoftypes/OpenFlux2/transport/cupsonline"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport/cupsonline"
 )
 
 // A stand-in for cups.online (room pages, subscription tokens, a Centrifugo

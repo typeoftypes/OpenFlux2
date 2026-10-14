@@ -33,7 +33,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/typeoftypes/OpenFlux2/transport/script"
+	"github.com/p1neappleXpress/OpenFlux/transport/script"
 )
 
 // submitPath is where the bridge posts; it is reserved on the dev server.
