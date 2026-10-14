@@ -1,0 +1,36 @@
+package main
+
+import (
+	"fmt"
+
+	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/typeoftypes/OpenFlux2/transport/control"
+	"github.com/typeoftypes/OpenFlux2/transport/manager"
+	"github.com/typeoftypes/OpenFlux2/transport/registry"
+)
+
+// yandexCookiesFile is --yandex-cookies-file: a Netscape cookies.txt with
+// a Yandex login that every vyandex transport starts with.
+var yandexCookiesFile string
+
+// transportFactory builds a raw transport from a control.TransportConfig.
+// main.go passes it into manager.New, and manager calls it whenever the peer
+// asks the exit to bring up an additional transport at runtime. The types are
+// the registry's: it is the single place that knows every transport package.
+//
+// isExit is this process's role: a cupsonline client must never create
+// rooms of its own. (It used to be built as an exit everywhere, so a
+// Session client with no or dead rooms created four new ones and waited in
+// them, where the exit never came.)
+func transportFactory(baseCfg transport.TransportConfig, isExit bool) manager.Factory {
+	return func(cfg *control.TransportConfig) (transport.Transport, error) {
+		if cfg == nil {
+			return nil, fmt.Errorf("factory: nil config")
+		}
+		return registry.New(cfg.Type, cfg.URL, cfg.Params, registry.Options{
+			Base:              baseCfg,
+			IsExit:            isExit,
+			YandexCookiesFile: yandexCookiesFile,
+		})
+	}
+}
