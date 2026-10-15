@@ -83,13 +83,7 @@ func New(typ, url string, params map[string]interface{}, o Options) (transport.T
 	case "boards":
 		return yandex.NewBoardsTransport(url, base), nil
 	case "mailru":
-		lanes := mailru.DefaultMailruLanes
-		if v := str("stripes"); v != "" && v != "auto" {
-			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				lanes = n
-			}
-		}
-		return mailru.NewMailruGroup(url, base, lanes), nil
+		return mailru.NewMailruDocsTransport(url, base), nil
 	case "cupsonline":
 		inner := cupsonline.NewCupsonlineTransport(url, base, !o.IsExit)
 		return &stripedRoomTransport{

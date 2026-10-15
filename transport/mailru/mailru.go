@@ -8,7 +8,6 @@ package mailru
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,26 +29,10 @@ import (
 	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
-// Browser UA pool — rotated per session (Mail.ru still rejects Chrome/137 on some edges).
-var mailruUserAgents = []string{
-	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0",
-	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:156.0) Gecko/20100101 Firefox/156.0",
-	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:155.0) Gecko/20100101 Firefox/155.0",
-	"Mozilla/5.0 (X11; Linux x86_64; rv:155.0) Gecko/20100101 Firefox/155.0",
-	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:154.0) Gecko/20100101 Firefox/154.0",
-}
-
-func pickMailruUA() string {
-	return mailruUserAgents[rand.Intn(len(mailruUserAgents))]
-}
-
-// maxMailruCursorRaw: live limit ~3000; 4096 triggers access deny.
-const maxMailruCursorRaw = 2800
-
-// Limit concurrent WS upgrades (anti HTTP 429).
-var mailruDialSem = make(chan struct{}, 2)
-
-var fragMagic = []byte{0x4d, 0x43}
+// Mail.ru rejects the old Chrome/137 UA on the WebSocket upgrade with HTTP 409
+// on some edge nodes; a current Firefox UA is accepted for both the API and the
+// WebSocket. Reported by @Shiller70 (issue #164).
+const mailruUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0"
 
 var cursorPayloadRe = regexp.MustCompile(`"cursor":"[^;]+;([^"]+)"`)
 
@@ -188,8 +171,6 @@ type MailruDocsTransport struct {
 	// are replaced under a live connection, and two reconnects open two
 	// sessions to the document.
 	reconnecting atomic.Bool
-	sessionUA string
-	frags     map[uint32]*mailruFrag
 }
 
 // NewMailruDocsTransport accepts either a bare weblink ("AbCdEfGh1/IjKlMnOp2")
@@ -199,7 +180,6 @@ func NewMailruDocsTransport(weblink string, config transport.TransportConfig) *M
 	t := &MailruDocsTransport{
 		BaseTransport: transport.NewBaseTransport(config),
 		weblink:       normalizeWeblink(weblink),
-		sessionUA:     pickMailruUA(),
 	}
 	t.baseUserID = randUserID()
 	jar, _ := cookiejar.New(nil)
@@ -209,10 +189,6 @@ func NewMailruDocsTransport(weblink string, config transport.TransportConfig) *M
 
 func normalizeWeblink(weblink string) string {
 	weblink = strings.TrimSpace(weblink)
-	// Strip query/fragment from full URLs users paste from the browser.
-	if i := strings.IndexAny(weblink, "?#"); i >= 0 {
-		weblink = weblink[:i]
-	}
 	for _, prefix := range []string{
 		"https://cloud.mail.ru/public/",
 		"http://cloud.mail.ru/public/",
@@ -223,9 +199,8 @@ func normalizeWeblink(weblink string) string {
 			return strings.Trim(strings.TrimPrefix(weblink, prefix), "/")
 		}
 	}
-	return strings.Trim(weblink, "/")
+	return weblink
 }
-
 
 func (t *MailruDocsTransport) Start() error {
 	if err := t.BaseTransport.Start(); err != nil {
@@ -311,26 +286,15 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 			}).DialContext,
 		}
 		headers := http.Header{}
-		ua := t.sessionUA
-		if ua == "" {
-			ua = pickMailruUA()
-			t.sessionUA = ua
-		}
-		headers.Set("User-Agent", ua)
-		headers.Set("Accept", "*/*")
-		headers.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
-		headers.Set("Cache-Control", "no-cache")
-		headers.Set("Pragma", "no-cache")
-		headers.Set("Sec-Fetch-Dest", "websocket")
-		headers.Set("Sec-Fetch-Mode", "websocket")
-		headers.Set("Sec-Fetch-Site", "same-site")
+		headers.Set("User-Agent", mailruUserAgent)
+		// Some Mail.ru edge nodes still answer 409 to the upgrade when the
+		// request looks less like a browser than the others; a real browser
+		// always sends Accept-Language. Reported to still hit iOS (#164).
+		headers.Set("Accept-Language", "en-US,en;q=0.9")
 		headers.Set("Origin", "https://docs.datacloudmail.ru")
-		headers.Set("Referer", "https://cloud.mail.ru/")
 
-		utils.Debugf("[M-DOCS] WebSocket dial %s UA=%s", info.WsURL, t.sessionUA)
-		mailruDialSem <- struct{}{}
+		utils.Debugf("[M-DOCS] WebSocket dial %s", info.WsURL)
 		conn, resp, err := dialer.Dial(info.WsURL, headers)
-		<-mailruDialSem
 		if err != nil {
 			status := 0
 			if resp != nil {
@@ -341,23 +305,8 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 			return
 		}
 		utils.Debugf("[M-DOCS] WebSocket connected")
-		// After auth the server may push the whole document as one frame
-		// (2MB+). Default gorilla limit 32KB / many clients 1MB → abrupt
-		// close 1005 and reconnect loops on real public docs.
-		conn.SetReadLimit(16 << 20)
-		if nc := conn.UnderlyingConn(); nc != nil {
-			if tc, ok := nc.(*net.TCPConn); ok {
-				_ = tc.SetNoDelay(true)
-				_ = tc.SetWriteBuffer(512 * 1024)
-				_ = tc.SetReadBuffer(512 * 1024)
-			}
-		}
 
-		qsize := t.GetConfig().MaxQueueSize
-		if qsize < 4096 {
-			qsize = 4096
-		}
-		writeQueue := make(chan []byte, qsize)
+		writeQueue := make(chan []byte, t.GetConfig().MaxQueueSize)
 		if existingSession != nil {
 			writeQueue = existingSession.WriteQueue
 		}
@@ -378,17 +327,13 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 
 		t.Mu.Lock()
 		t.session = session
+		t.SetConnected(true)
 		t.Mu.Unlock()
 
 		if existingSession == nil {
 			utils.SafeGo("mailru.writer", t.writerLoop)
 		}
 
-		editOK := canEdit(info.Permissions)
-		authMode := "edit"
-		if !editOK {
-			authMode = "view"
-		}
 		authMsg := map[string]interface{}{
 			"type":                "auth",
 			"docid":               info.DocKey,
@@ -403,7 +348,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 			"lastOtherSaveTime":  -1,
 			"block":              []interface{}{},
 			"documentFormatSave": 65,
-			"view":               !editOK,
+			"view":               false,
 			"isCloseCoAuthoring": false,
 			"openCmd": map[string]interface{}{
 				"c":               "open",
@@ -417,7 +362,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 				"convertToOrigin": ".pdf.xps.oxps.djvu",
 			},
 			"lang":                  "ru",
-			"mode":                  authMode,
+			"mode":                  "edit",
 			"permissions":           info.Permissions,
 			"IsAnonymousUser":       false,
 			"timezoneOffset":        -180,
@@ -438,7 +383,7 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 					utils.Infof("[M-DOCS] connection to the document dropped: %v; reconnecting", err)
 				}
 				t.SetConnected(false)
-				_ = conn.Close()
+				conn.Close()
 
 				next := attempt
 				if time.Since(connectedAt) > 15*time.Second {
@@ -486,21 +431,11 @@ func (t *MailruDocsTransport) writerLoop() {
 			continue
 		}
 
-		chunks := splitMailruCursor(pending)
-		writeFail := false
-		for _, chunk := range chunks {
-			payload := base64.StdEncoding.EncodeToString(chunk)
-			msg := fmt.Sprintf(`42["message",{"type":"cursor","cursor":"%d;%s"}]`, len(chunk), payload)
-			if err := session.safeWrite(websocket.TextMessage, []byte(msg)); err != nil {
-				utils.Debugf("[M-DOCS] Write error: %v", err)
-				writeFail = true
-				break
-			}
-			// mild jitter — not a fixed metronome
-			time.Sleep(time.Duration(1+rand.Intn(6)) * time.Millisecond)
-		}
-		if writeFail {
-			time.Sleep(5 * time.Millisecond)
+		payload := base64.StdEncoding.EncodeToString(pending)
+		msg := fmt.Sprintf(`42["message",{"type":"cursor","cursor":"18;%s"}]`, payload)
+		if err := session.safeWrite(websocket.TextMessage, []byte(msg)); err != nil {
+			utils.Debugf("[M-DOCS] Write error: %v", err)
+			time.Sleep(15 * time.Millisecond)
 			continue
 		}
 		pending = nil
@@ -508,12 +443,23 @@ func (t *MailruDocsTransport) writerLoop() {
 }
 
 func (t *MailruDocsTransport) keepAliveLoop() {
-	// Engine.IO ping/pong keeps the socket. Application ---KA--- caused
-	// disconnectReason 4004 on public read-only documents.
 	ticker := time.NewTicker(t.GetConfig().KeepAliveInterval)
 	defer ticker.Stop()
+	keepAliveMsg := `42["message",{"type":"cursor","cursor":"18;---KA---"}]`
+
 	for t.IsRunning() {
 		<-ticker.C
+		t.Mu.Lock()
+		session := t.session
+		t.Mu.Unlock()
+
+		if session != nil && session.Conn != nil {
+			if err := session.safeWrite(websocket.TextMessage, []byte(keepAliveMsg)); err != nil {
+				utils.Debugf("[M-DOCS] Keep-alive failed, closing the connection to reconnect: %v", err)
+				t.SetConnected(false)
+				_ = session.Conn.Close()
+			}
+		}
 	}
 }
 
@@ -607,7 +553,6 @@ func (t *MailruDocsTransport) handleMessage(session *DocSession, data []byte) {
 
 	if strings.Contains(text, `"type":"auth"`) && strings.Contains(text, `"result":1`) {
 		utils.Debugf("[M-DOCS] Auth OK for user %s", session.UserID)
-		t.SetConnected(true)
 		return
 	}
 
@@ -618,7 +563,8 @@ func (t *MailruDocsTransport) handleMessage(session *DocSession, data []byte) {
 				utils.Debugf("[M-DOCS] Base64 decode error: %v", err)
 				continue
 			}
-			t.deliverCursor(decoded)
+			t.RecordReceive(len(decoded))
+			t.CallReceive(decoded)
 		}
 	}
 }
@@ -679,172 +625,62 @@ func reconnectBackoff(n int) time.Duration {
 
 // fetchDocInfo POSTs to Mail.ru's public-document editor API and parses the
 // response into the fields needed to open the collaborative WebSocket.
-// Warms the cookie jar with a GET of the public page first — some edges
-// answer the bare API call with an HTML interstitial (WAF / region gate),
-// which used to surface as: failed to parse JSON: invalid character '<'.
-// fetchDocInfo opens the public document via Mail.ru's r7/edit API.
-// Some datacenter IPs receive an HTML interstitial (HTTP 200) instead of JSON;
-// we try several browser-like strategies before failing with a clear error.
 func (t *MailruDocsTransport) fetchDocInfo(weblink string) (MailruDocsInfo, error) {
-	ua := t.sessionUA
-	if ua == "" {
-		ua = pickMailruUA()
-		t.sessionUA = ua
-	}
-
-	type strategy struct {
-		name     string
-		platform string
-		warm     bool
-		ua       string
-	}
-	strategies := []strategy{
-		{"desktop+warm", "desktop_web", true, ua},
-		{"desktop", "desktop_web", false, ua},
-		{"mobile+warm", "mobileweb", true, ua},
-		{"mobile", "mobileweb", false, ua},
-		{"desktop+chrome", "desktop_web", false, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"},
-		{"desktop+chrome+warm", "desktop_web", true, "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"},
-	}
-
-	var lastErr error
-	for _, st := range strategies {
-		info, err := t.fetchDocInfoOnce(weblink, st.platform, st.ua, st.warm)
-		if err == nil {
-			utils.Debugf("[M-DOCS] fetchDocInfo OK via %s", st.name)
-			return info, nil
-		}
-		lastErr = err
-		utils.Debugf("[M-DOCS] fetchDocInfo %s: %v", st.name, err)
-	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("fetchDocInfo failed")
-	}
-	// Hint: HTML 200 usually means WAF/region block of the exit IP.
-	return MailruDocsInfo{}, fmt.Errorf("%w (if HTML: Mail.ru may be blocking this server IP — try another exit)", lastErr)
-}
-
-func (t *MailruDocsTransport) fetchDocInfoOnce(weblink, platform, ua string, warm bool) (MailruDocsInfo, error) {
 	t.jarMu.RLock()
-	baseJar := t.cookieJar
+	jar := t.cookieJar
 	t.jarMu.RUnlock()
-
-	jar := baseJar
-	if jar == nil || !warm {
-		// Fresh jar per attempt when not warming — avoids sticky WAF cookies.
-		j, err := cookiejar.New(nil)
+	if jar == nil {
+		var err error
+		jar, err = cookiejar.New(nil)
 		if err != nil {
 			return MailruDocsInfo{}, err
 		}
-		jar = j
 	}
-	client := &http.Client{
-		Jar:     jar,
-		Timeout: 20 * time.Second,
-		// Mail.ru nginx often answers 302 on the first POST from datacenter IPs.
-		// Go's default client turns 302+POST into GET without body → HTML page →
-		// "invalid character '<'". Re-issue the same POST to the Location URL.
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return fmt.Errorf("too many redirects")
-			}
-			if len(via) > 0 {
-				orig := via[0]
-				if orig.Body != nil && orig.GetBody != nil {
-					body, err := orig.GetBody()
-					if err == nil {
-						req.Body = body
-						req.ContentLength = orig.ContentLength
-						req.Method = orig.Method
-						// copy essential headers
-						if ct := orig.Header.Get("Content-Type"); ct != "" {
-							req.Header.Set("Content-Type", ct)
-						}
-						if ua := orig.Header.Get("User-Agent"); ua != "" {
-							req.Header.Set("User-Agent", ua)
-						}
-					}
-				} else if orig.Method == http.MethodPost {
-					req.Method = http.MethodPost
-				}
-			}
-			return nil
-		},
-	}
-
-	if warm {
-		pubURL := "https://cloud.mail.ru/public/" + weblink
-		if greq, err := http.NewRequest("GET", pubURL, nil); err == nil {
-			greq.Header.Set("User-Agent", ua)
-			greq.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-			greq.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
-			greq.Header.Set("Upgrade-Insecure-Requests", "1")
-			if resp, err := client.Do(greq); err == nil {
-				_, _ = io.Copy(io.Discard, resp.Body)
-				resp.Body.Close()
-			}
-		}
-	}
+	client := &http.Client{Jar: jar, Timeout: 15 * time.Second}
 
 	reqBody := map[string]string{
 		"x-email":  "anonym",
 		"public":   "/" + weblink,
-		"platform": platform,
+		"platform": "desktop_web",
 	}
 	jsonData, _ := json.Marshal(reqBody)
+
 	apiURL := "https://cloud.mail.ru/api/v4/r7/edit"
-	req, err := http.NewRequest("POST", apiURL, bytes.NewReader(jsonData))
-	if err != nil {
-		return MailruDocsInfo{}, err
-	}
-	req.GetBody = func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(jsonData)), nil
-	}
-	req.ContentLength = int64(len(jsonData))
+	utils.Debugf("[M-DOCS] fetchDocInfo POST %s", apiURL)
+
+	req, _ := http.NewRequest("POST", apiURL, bytes.NewBuffer(jsonData))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
-	req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
-	req.Header.Set("User-Agent", ua)
-	req.Header.Set("Origin", "https://cloud.mail.ru")
-	req.Header.Set("Referer", fmt.Sprintf("https://cloud.mail.ru/public/%s?weblink=%s", weblink, weblink))
-	req.Header.Set("Sec-Fetch-Dest", "empty")
-	req.Header.Set("Sec-Fetch-Mode", "cors")
-	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("User-Agent", mailruUserAgent)
 	req.Header.Set("X-Api-Version", "4")
-	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	req.Header.Set("Referer", fmt.Sprintf("https://cloud.mail.ru/public/%s?weblink=%s", weblink, weblink))
 
 	resp, err := client.Do(req)
 	if err != nil {
 		return MailruDocsInfo{}, err
 	}
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	defer resp.Body.Close()
 
-	trim := bytes.TrimSpace(bodyBytes)
-	if len(trim) == 0 {
-		return MailruDocsInfo{}, fmt.Errorf("API empty body (HTTP %d)", resp.StatusCode)
-	}
-	if trim[0] == '<' || bytes.Contains(trim, []byte("<html")) || bytes.Contains(trim, []byte("<!DOCTYPE")) {
-		snippet := string(trim)
-		if len(snippet) > 100 {
-			snippet = snippet[:100]
-		}
-		return MailruDocsInfo{}, fmt.Errorf("API returned HTML instead of JSON (HTTP %d, platform=%s): %s", resp.StatusCode, platform, snippet)
-	}
 	if resp.StatusCode != http.StatusOK {
 		return MailruDocsInfo{}, fmt.Errorf("API returned status %d", resp.StatusCode)
 	}
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
 
 	var res map[string]interface{}
 	if err := json.Unmarshal(bodyBytes, &res); err != nil {
 		return MailruDocsInfo{}, fmt.Errorf("failed to parse JSON: %w", err)
 	}
+
 	apiBase, _ := res["api"].(string)
 	token, _ := res["token"].(string)
+
 	document, ok := res["document"].(map[string]interface{})
 	if !ok || document == nil {
 		return MailruDocsInfo{}, fmt.Errorf("document object missing")
 	}
+
 	docKey, _ := document["key"].(string)
 	fileType, _ := document["fileType"].(string)
 	docURL, _ := document["url"].(string)
@@ -853,23 +689,21 @@ func (t *MailruDocsTransport) fetchDocInfoOnce(weblink, platform, ua string, war
 	if permissions == nil {
 		permissions = make(map[string]interface{})
 	}
+
 	editorConfig, ok := res["editorConfig"].(map[string]interface{})
 	if !ok || editorConfig == nil {
 		return MailruDocsInfo{}, fmt.Errorf("editorConfig object missing")
 	}
 	callbackURL, _ := editorConfig["callbackUrl"].(string)
+
 	userObj, _ := editorConfig["user"].(map[string]interface{})
 	var editorUserID string
 	if userObj != nil {
 		editorUserID, _ = userObj["id"].(string)
 	}
-	wsBase := forceWSS(apiBase)
-	wsURL := fmt.Sprintf("%s/doc/%s/c/?EIO=4&transport=websocket", wsBase, docKey)
 
-	// Persist jar that worked for subsequent WS / reconnects.
-	t.jarMu.Lock()
-	t.cookieJar = jar
-	t.jarMu.Unlock()
+	wsBase := strings.Replace(apiBase, "https://", "wss://", 1)
+	wsURL := fmt.Sprintf("%s/doc/%s/c/?EIO=4&transport=websocket", wsBase, docKey)
 
 	return MailruDocsInfo{
 		Token:        token,
@@ -883,9 +717,6 @@ func (t *MailruDocsTransport) fetchDocInfoOnce(weblink, platform, ua string, war
 		EditorUserID: editorUserID,
 	}, nil
 }
-
-
-
 
 func randUserID() string {
 	return fmt.Sprintf("%010d", rand.New(rand.NewSource(time.Now().UnixNano())).Intn(1000000000))
@@ -945,119 +776,4 @@ func (t *MailruDocsTransport) ApplyCookies(values map[string]string) error {
 		t.scheduleReconnect(0)
 	}
 	return nil
-}
-
-func forceWSS(apiBase string) string {
-	apiBase = strings.TrimSpace(apiBase)
-	switch {
-	case strings.HasPrefix(apiBase, "wss://"):
-		return apiBase
-	case strings.HasPrefix(apiBase, "ws://"):
-		return "wss://" + strings.TrimPrefix(apiBase, "ws://")
-	case strings.HasPrefix(apiBase, "https://"):
-		return "wss://" + strings.TrimPrefix(apiBase, "https://")
-	case strings.HasPrefix(apiBase, "http://"):
-		return "wss://" + strings.TrimPrefix(apiBase, "http://")
-	case apiBase == "":
-		return "wss://docs.datacloudmail.ru"
-	default:
-		return "wss://" + strings.TrimPrefix(apiBase, "//")
-	}
-}
-
-func splitMailruCursor(data []byte) [][]byte {
-	if len(data) <= maxMailruCursorRaw {
-		return [][]byte{data}
-	}
-	const hdr = 6
-	maxPayload := maxMailruCursorRaw - hdr
-	if maxPayload < 256 {
-		maxPayload = 256
-	}
-	n := (len(data) + maxPayload - 1) / maxPayload
-	if n > 0xffff {
-		return [][]byte{data}
-	}
-	out := make([][]byte, 0, n)
-	for i := 0; i < n; i++ {
-		start := i * maxPayload
-		end := start + maxPayload
-		if end > len(data) {
-			end = len(data)
-		}
-		chunk := make([]byte, hdr+end-start)
-		copy(chunk[0:2], fragMagic)
-		binary.BigEndian.PutUint16(chunk[2:4], uint16(n))
-		binary.BigEndian.PutUint16(chunk[4:6], uint16(i))
-		copy(chunk[hdr:], data[start:end])
-		out = append(out, chunk)
-	}
-	return out
-}
-
-type mailruFrag struct {
-	n        int
-	parts    [][]byte
-	got      int
-	deadline time.Time
-}
-
-func (t *MailruDocsTransport) deliverCursor(raw []byte) {
-	if len(raw) >= 6 && raw[0] == fragMagic[0] && raw[1] == fragMagic[1] {
-		n := int(binary.BigEndian.Uint16(raw[2:4]))
-		idx := int(binary.BigEndian.Uint16(raw[4:6]))
-		if n <= 0 || idx < 0 || idx >= n {
-			return
-		}
-		t.Mu.Lock()
-		if t.frags == nil {
-			t.frags = map[uint32]*mailruFrag{}
-		}
-		key := uint32(n)
-		f := t.frags[key]
-		if f == nil || f.n != n || time.Now().After(f.deadline) {
-			f = &mailruFrag{n: n, parts: make([][]byte, n), deadline: time.Now().Add(15 * time.Second)}
-			t.frags[key] = f
-		}
-		if f.parts[idx] == nil {
-			f.parts[idx] = append([]byte(nil), raw[6:]...)
-			f.got++
-		}
-		if f.got == n {
-			delete(t.frags, key)
-			var full []byte
-			for i := 0; i < n; i++ {
-				full = append(full, f.parts[i]...)
-			}
-			t.Mu.Unlock()
-			t.RecordReceive(len(full))
-			t.CallReceive(full)
-			return
-		}
-		t.Mu.Unlock()
-		return
-	}
-	t.RecordReceive(len(raw))
-	t.CallReceive(raw)
-}
-
-// DefaultMailruLanes — parallel document sessions (striping) for throughput.
-const DefaultMailruLanes = 6
-
-// NewMailruGroup bonds parallel Mail.ru sessions via StripedTransport.
-func NewMailruGroup(weblink string, config transport.TransportConfig, lanes int) transport.Transport {
-	if lanes < 1 {
-		lanes = DefaultMailruLanes
-	}
-	if lanes > 8 {
-		lanes = 8
-	}
-	if lanes == 1 {
-		return NewMailruDocsTransport(weblink, config)
-	}
-	ts := make([]transport.Transport, lanes)
-	for i := 0; i < lanes; i++ {
-		ts[i] = NewMailruDocsTransport(weblink, config)
-	}
-	return transport.NewStripedTransport(ts)
 }
