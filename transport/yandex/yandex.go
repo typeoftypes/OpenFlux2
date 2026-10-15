@@ -331,7 +331,7 @@ func (t *YandexDocsTransport) connectToDoc(attempt int) {
 			NetDialContext:   dialIPv4First,
 		}
 		headers := http.Header{}
-		headers.Set("User-Agent", "Mozilla/5.0")
+		headers.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:155.0) Gecko/20100101 Firefox/155.0")
 		headers.Set("Origin", info.Origin)
 		headers.Set("Cookie", info.CookieStr)
 		headers.Set("Host", info.Host)
@@ -470,7 +470,7 @@ func (t *YandexDocsTransport) writerLoop() {
 func (t *YandexDocsTransport) keepAliveLoop() {
 	ticker := time.NewTicker(t.GetConfig().KeepAliveInterval)
 	defer ticker.Stop()
-	keepAliveMsg := `42["message",{"type":"cursor","cursor":"18;---KA---"}]`
+	keepAliveMsg := "" // Engine.IO only
 
 	for t.IsRunning() {
 		<-ticker.C
@@ -478,6 +478,9 @@ func (t *YandexDocsTransport) keepAliveLoop() {
 		session := t.session
 		t.Mu.Unlock()
 
+		if keepAliveMsg == "" {
+			continue
+		}
 		if session != nil && session.Conn != nil {
 			if err := session.safeWrite(websocket.TextMessage, []byte(keepAliveMsg)); err != nil {
 				utils.Debugf("[YDOCS] Keep-alive failed, closing the connection to reconnect: %v", err)
@@ -761,7 +764,7 @@ func (t *YandexDocsTransport) fetchDocInfo(url, userID string) (YandexDocsInfo, 
 		Timeout: 15 * time.Second,
 	}
 
-	ua := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:153.0) Gecko/20100101 Firefox/153.0"
+	ua := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:155.0) Gecko/20100101 Firefox/155.0"
 
 	// Явно следуем по редиректам: до 10 хопов.
 	currentURL := url

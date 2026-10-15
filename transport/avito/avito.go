@@ -26,7 +26,7 @@ import (
 var baseURL = "https://code.avito.ru"
 
 const (
-	avitoUA    = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+	avitoUA    = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
 	shareDBType = "http://sharejs.org/types/textv1"
 )
 
@@ -173,11 +173,16 @@ type channelStats struct {
 }
 
 func (w *avitoWS) dial() (*websocket.Conn, error) {
-	wsURL := strings.Replace(baseURL, "https://", "wss://", 1) + "/sharedb"
-	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
+	wsURL := forceWSSAvito(baseURL) + "/sharedb"
 
 	header := http.Header{}
 	header.Set("User-Agent", avitoUA)
+	header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+	header.Set("Cache-Control", "no-cache")
+	header.Set("Pragma", "no-cache")
+	header.Set("Sec-Fetch-Dest", "websocket")
+	header.Set("Sec-Fetch-Mode", "websocket")
+	header.Set("Sec-Fetch-Site", "same-site")
 	header.Set("Origin", baseURL)
 	header.Set("Cookie", w.cookies)
 
@@ -883,5 +888,22 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 		return true
 	case <-ctx.Done():
 		return false
+	}
+}
+
+
+func forceWSSAvito(base string) string {
+	base = strings.TrimSpace(base)
+	switch {
+	case strings.HasPrefix(base, "wss://"):
+		return base
+	case strings.HasPrefix(base, "ws://"):
+		return "wss://" + strings.TrimPrefix(base, "ws://")
+	case strings.HasPrefix(base, "https://"):
+		return "wss://" + strings.TrimPrefix(base, "https://")
+	case strings.HasPrefix(base, "http://"):
+		return "wss://" + strings.TrimPrefix(base, "http://")
+	default:
+		return "wss://" + strings.TrimPrefix(base, "//")
 	}
 }

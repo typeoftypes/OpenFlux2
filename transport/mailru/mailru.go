@@ -8,6 +8,7 @@ package mailru
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,10 +30,22 @@ import (
 	"github.com/typeoftypes/OpenFlux2/utils"
 )
 
-// Mail.ru rejects the old Chrome/137 UA on the WebSocket upgrade with HTTP 409
-// on some edge nodes; a current Firefox UA is accepted for both the API and the
-// WebSocket. Reported by @Shiller70 (issue #164).
-const mailruUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0"
+// Browser UA pool — rotated per session.
+var mailruUserAgents = []string{
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:155.0) Gecko/20100101 Firefox/155.0",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:156.0) Gecko/20100101 Firefox/156.0",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:155.0) Gecko/20100101 Firefox/155.0",
+	"Mozilla/5.0 (X11; Linux x86_64; rv:155.0) Gecko/20100101 Firefox/155.0",
+}
+
+func pickMailruUA() string {
+	return mailruUserAgents[rand.Intn(len(mailruUserAgents))]
+}
+
+const maxMailruCursorRaw = 2800
+var mailruDialSem = make(chan struct{}, 2)
+var fragMagic = []byte{0x4d, 0x43}
+
 
 var cursorPayloadRe = regexp.MustCompile(`"cursor":"[^;]+;([^"]+)"`)
 
@@ -171,6 +184,8 @@ type MailruDocsTransport struct {
 	// are replaced under a live connection, and two reconnects open two
 	// sessions to the document.
 	reconnecting atomic.Bool
+	sessionUA string
+	frags     map[uint32]*mailruFrag
 }
 
 // NewMailruDocsTransport accepts either a bare weblink ("AbCdEfGh1/IjKlMnOp2")
@@ -180,6 +195,7 @@ func NewMailruDocsTransport(weblink string, config transport.TransportConfig) *M
 	t := &MailruDocsTransport{
 		BaseTransport: transport.NewBaseTransport(config),
 		weblink:       normalizeWeblink(weblink),
+		sessionUA:     pickMailruUA(),
 	}
 	t.baseUserID = randUserID()
 	jar, _ := cookiejar.New(nil)
@@ -189,6 +205,9 @@ func NewMailruDocsTransport(weblink string, config transport.TransportConfig) *M
 
 func normalizeWeblink(weblink string) string {
 	weblink = strings.TrimSpace(weblink)
+	if i := strings.IndexAny(weblink, "?#"); i >= 0 {
+		weblink = weblink[:i]
+	}
 	for _, prefix := range []string{
 		"https://cloud.mail.ru/public/",
 		"http://cloud.mail.ru/public/",
@@ -199,8 +218,9 @@ func normalizeWeblink(weblink string) string {
 			return strings.Trim(strings.TrimPrefix(weblink, prefix), "/")
 		}
 	}
-	return weblink
+	return strings.Trim(weblink, "/")
 }
+
 
 func (t *MailruDocsTransport) Start() error {
 	if err := t.BaseTransport.Start(); err != nil {
@@ -280,13 +300,28 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 			// carrier never came up. Reported by @pirsasha (issue #163).
 			EnableCompression: true,
 			HandshakeTimeout:  15 * time.Second,
+			ReadBufferSize:    256 * 1024,
+			WriteBufferSize:   256 * 1024,
 			NetDialContext: netbind.Wrap(&net.Dialer{
 				Timeout:   10 * time.Second,
 				KeepAlive: 30 * time.Second,
 			}).DialContext,
 		}
 		headers := http.Header{}
-		headers.Set("User-Agent", mailruUserAgent)
+		ua := t.sessionUA
+		if ua == "" {
+			ua = pickMailruUA()
+			t.sessionUA = ua
+		}
+		headers.Set("User-Agent", ua)
+		headers.Set("Accept", "*/*")
+		headers.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+		headers.Set("Cache-Control", "no-cache")
+		headers.Set("Pragma", "no-cache")
+		headers.Set("Sec-Fetch-Dest", "websocket")
+		headers.Set("Sec-Fetch-Mode", "websocket")
+		headers.Set("Sec-Fetch-Site", "same-site")
+		headers.Set("Referer", "https://cloud.mail.ru/")
 		// Some Mail.ru edge nodes still answer 409 to the upgrade when the
 		// request looks less like a browser than the others; a real browser
 		// always sends Accept-Language. Reported to still hit iOS (#164).
@@ -294,7 +329,9 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 		headers.Set("Origin", "https://docs.datacloudmail.ru")
 
 		utils.Debugf("[M-DOCS] WebSocket dial %s", info.WsURL)
+		mailruDialSem <- struct{}{}
 		conn, resp, err := dialer.Dial(info.WsURL, headers)
+		<-mailruDialSem
 		if err != nil {
 			status := 0
 			if resp != nil {
@@ -305,8 +342,20 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 			return
 		}
 		utils.Debugf("[M-DOCS] WebSocket connected")
+		conn.SetReadLimit(16 << 20)
+		if nc := conn.UnderlyingConn(); nc != nil {
+			if tc, ok := nc.(*net.TCPConn); ok {
+				_ = tc.SetNoDelay(true)
+				_ = tc.SetWriteBuffer(512 * 1024)
+				_ = tc.SetReadBuffer(512 * 1024)
+			}
+		}
 
-		writeQueue := make(chan []byte, t.GetConfig().MaxQueueSize)
+		qsize := t.GetConfig().MaxQueueSize
+		if qsize < 4096 {
+			qsize = 4096
+		}
+		writeQueue := make(chan []byte, qsize)
 		if existingSession != nil {
 			writeQueue = existingSession.WriteQueue
 		}
@@ -327,7 +376,6 @@ func (t *MailruDocsTransport) connectToDoc(attempt int) {
 
 		t.Mu.Lock()
 		t.session = session
-		t.SetConnected(true)
 		t.Mu.Unlock()
 
 		if existingSession == nil {
@@ -431,11 +479,20 @@ func (t *MailruDocsTransport) writerLoop() {
 			continue
 		}
 
-		payload := base64.StdEncoding.EncodeToString(pending)
-		msg := fmt.Sprintf(`42["message",{"type":"cursor","cursor":"18;%s"}]`, payload)
-		if err := session.safeWrite(websocket.TextMessage, []byte(msg)); err != nil {
-			utils.Debugf("[M-DOCS] Write error: %v", err)
-			time.Sleep(15 * time.Millisecond)
+		chunks := splitMailruCursor(pending)
+		writeFail := false
+		for _, chunk := range chunks {
+			payload := base64.StdEncoding.EncodeToString(chunk)
+			msg := fmt.Sprintf(`42["message",{"type":"cursor","cursor":"%d;%s"}]`, len(chunk), payload)
+			if err := session.safeWrite(websocket.TextMessage, []byte(msg)); err != nil {
+				utils.Debugf("[M-DOCS] Write error: %v", err)
+				writeFail = true
+				break
+			}
+			time.Sleep(time.Duration(1+rand.Intn(6)) * time.Millisecond)
+		}
+		if writeFail {
+			time.Sleep(5 * time.Millisecond)
 			continue
 		}
 		pending = nil
@@ -445,7 +502,7 @@ func (t *MailruDocsTransport) writerLoop() {
 func (t *MailruDocsTransport) keepAliveLoop() {
 	ticker := time.NewTicker(t.GetConfig().KeepAliveInterval)
 	defer ticker.Stop()
-	keepAliveMsg := `42["message",{"type":"cursor","cursor":"18;---KA---"}]`
+	keepAliveMsg := "" // Engine.IO only; ---KA--- breaks read-only docs
 
 	for t.IsRunning() {
 		<-ticker.C
@@ -453,6 +510,9 @@ func (t *MailruDocsTransport) keepAliveLoop() {
 		session := t.session
 		t.Mu.Unlock()
 
+		if keepAliveMsg == "" {
+			continue
+		}
 		if session != nil && session.Conn != nil {
 			if err := session.safeWrite(websocket.TextMessage, []byte(keepAliveMsg)); err != nil {
 				utils.Debugf("[M-DOCS] Keep-alive failed, closing the connection to reconnect: %v", err)
@@ -553,6 +613,7 @@ func (t *MailruDocsTransport) handleMessage(session *DocSession, data []byte) {
 
 	if strings.Contains(text, `"type":"auth"`) && strings.Contains(text, `"result":1`) {
 		utils.Debugf("[M-DOCS] Auth OK for user %s", session.UserID)
+		t.SetConnected(true)
 		return
 	}
 
@@ -563,8 +624,7 @@ func (t *MailruDocsTransport) handleMessage(session *DocSession, data []byte) {
 				utils.Debugf("[M-DOCS] Base64 decode error: %v", err)
 				continue
 			}
-			t.RecordReceive(len(decoded))
-			t.CallReceive(decoded)
+			t.deliverCursor(decoded)
 		}
 	}
 }
@@ -652,7 +712,15 @@ func (t *MailruDocsTransport) fetchDocInfo(weblink string) (MailruDocsInfo, erro
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	req.Header.Set("User-Agent", mailruUserAgent)
+	ua := t.sessionUA
+	if ua == "" {
+		ua = pickMailruUA()
+	}
+	req.Header.Set("User-Agent", ua)
+	req.Header.Set("Origin", "https://cloud.mail.ru")
+	req.Header.Set("Sec-Fetch-Dest", "empty")
+	req.Header.Set("Sec-Fetch-Mode", "cors")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	req.Header.Set("X-Api-Version", "4")
 	req.Header.Set("Referer", fmt.Sprintf("https://cloud.mail.ru/public/%s?weblink=%s", weblink, weblink))
 
@@ -702,7 +770,7 @@ func (t *MailruDocsTransport) fetchDocInfo(weblink string) (MailruDocsInfo, erro
 		editorUserID, _ = userObj["id"].(string)
 	}
 
-	wsBase := strings.Replace(apiBase, "https://", "wss://", 1)
+	wsBase := forceWSS(apiBase)
 	wsURL := fmt.Sprintf("%s/doc/%s/c/?EIO=4&transport=websocket", wsBase, docKey)
 
 	return MailruDocsInfo{
@@ -776,4 +844,117 @@ func (t *MailruDocsTransport) ApplyCookies(values map[string]string) error {
 		t.scheduleReconnect(0)
 	}
 	return nil
+}
+
+func forceWSS(apiBase string) string {
+	apiBase = strings.TrimSpace(apiBase)
+	switch {
+	case strings.HasPrefix(apiBase, "wss://"):
+		return apiBase
+	case strings.HasPrefix(apiBase, "ws://"):
+		return "wss://" + strings.TrimPrefix(apiBase, "ws://")
+	case strings.HasPrefix(apiBase, "https://"):
+		return "wss://" + strings.TrimPrefix(apiBase, "https://")
+	case strings.HasPrefix(apiBase, "http://"):
+		return "wss://" + strings.TrimPrefix(apiBase, "http://")
+	case apiBase == "":
+		return "wss://docs.datacloudmail.ru"
+	default:
+		return "wss://" + strings.TrimPrefix(apiBase, "//")
+	}
+}
+
+func splitMailruCursor(data []byte) [][]byte {
+	if len(data) <= maxMailruCursorRaw {
+		return [][]byte{data}
+	}
+	const hdr = 6
+	maxPayload := maxMailruCursorRaw - hdr
+	if maxPayload < 256 {
+		maxPayload = 256
+	}
+	n := (len(data) + maxPayload - 1) / maxPayload
+	if n > 0xffff {
+		return [][]byte{data}
+	}
+	out := make([][]byte, 0, n)
+	for i := 0; i < n; i++ {
+		start := i * maxPayload
+		end := start + maxPayload
+		if end > len(data) {
+			end = len(data)
+		}
+		chunk := make([]byte, hdr+end-start)
+		copy(chunk[0:2], fragMagic)
+		binary.BigEndian.PutUint16(chunk[2:4], uint16(n))
+		binary.BigEndian.PutUint16(chunk[4:6], uint16(i))
+		copy(chunk[hdr:], data[start:end])
+		out = append(out, chunk)
+	}
+	return out
+}
+
+type mailruFrag struct {
+	n        int
+	parts    [][]byte
+	got      int
+	deadline time.Time
+}
+
+func (t *MailruDocsTransport) deliverCursor(raw []byte) {
+	if len(raw) >= 6 && raw[0] == fragMagic[0] && raw[1] == fragMagic[1] {
+		n := int(binary.BigEndian.Uint16(raw[2:4]))
+		idx := int(binary.BigEndian.Uint16(raw[4:6]))
+		if n <= 0 || idx < 0 || idx >= n {
+			return
+		}
+		t.Mu.Lock()
+		if t.frags == nil {
+			t.frags = map[uint32]*mailruFrag{}
+		}
+		key := uint32(n)
+		f := t.frags[key]
+		if f == nil || f.n != n || time.Now().After(f.deadline) {
+			f = &mailruFrag{n: n, parts: make([][]byte, n), deadline: time.Now().Add(15 * time.Second)}
+			t.frags[key] = f
+		}
+		if f.parts[idx] == nil {
+			f.parts[idx] = append([]byte(nil), raw[6:]...)
+			f.got++
+		}
+		if f.got == n {
+			delete(t.frags, key)
+			var full []byte
+			for i := 0; i < n; i++ {
+				full = append(full, f.parts[i]...)
+			}
+			t.Mu.Unlock()
+			t.RecordReceive(len(full))
+			t.CallReceive(full)
+			return
+		}
+		t.Mu.Unlock()
+		return
+	}
+	t.RecordReceive(len(raw))
+	t.CallReceive(raw)
+}
+
+const DefaultMailruLanes = 6
+
+func NewMailruGroup(weblink string, config transport.TransportConfig, lanes int) transport.Transport {
+	if lanes < 1 {
+		lanes = DefaultMailruLanes
+	}
+	if lanes > 8 {
+		lanes = 8
+	}
+	if lanes == 1 {
+		return NewMailruDocsTransport(weblink, config)
+	}
+	ts := make([]transport.Transport, lanes)
+	for i := 0; i < lanes; i++ {
+		ts[i] = NewMailruDocsTransport(weblink, config)
+	}
+	return transport.NewStripedTransport(ts)
 }

@@ -23,7 +23,7 @@ import (
 
 // browserUA is what the site sees: several free hosts turn away anything that
 // does not look like a browser.
-const browserUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+const browserUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
 
 // Site is a deployed node: where it is, its token, and how to carry the
 // requests. Zero Client uses a fresh one (with a cookie jar, for the host's
