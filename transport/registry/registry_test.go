@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/typeoftypes/OpenFlux2/transport"
+	"github.com/typeoftypes/OpenFlux2/transport/avito"
+	"github.com/typeoftypes/OpenFlux2/transport/cupsonline"
 	"github.com/typeoftypes/OpenFlux2/transport/mailru"
 	"github.com/typeoftypes/OpenFlux2/transport/oneme"
 	"github.com/typeoftypes/OpenFlux2/transport/script"
@@ -28,7 +30,8 @@ func TestEveryNativeTypeBuilds(t *testing.T) {
 		"vyandex":    &yandex.YandexVolgaTransport{},
 		"boards":     &yandex.BoardsTransport{},
 		"mailru":     &mailru.MailruDocsTransport{},
-		"cupsonline": &stripedRoomTransport{},
+		"cupsonline": &cupsonline.CupsonlineTransport{},
+		"avito":      &avito.AvitoTransport{},
 		"oneme":      &oneme.OneMeTransport{},
 		"direct":     &transport.DirectTransport{},
 	}
