@@ -1,0 +1,15 @@
+// flag:
+vkvideoURL := flag.String("vkvideo-url", "", "live.vkvideo.ru channel or video URL for vkvideo transport")
+// (NO --vkvideo-key — use --encryption-key-file like other transports)
+
+// allow-lists: add "vkvideo" next to "mailru"
+
+// urls map:
+"vkvideo": firstNonEmpty(*vkvideoURL, globalDocUrl),
+
+// single-transport:
+if *transportType == "vkvideo" || *transportType == "vklive" {
+    if *vkvideoURL != "" {
+        specs[0].URL = *vkvideoURL
+    }
+}

@@ -14,18 +14,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/typeoftypes/OpenFlux2/netbind"
-	"github.com/typeoftypes/OpenFlux2/socks5"
-	"github.com/typeoftypes/OpenFlux2/streamproxy"
-	"github.com/typeoftypes/OpenFlux2/transport"
-	"github.com/typeoftypes/OpenFlux2/transport/control"
-	"github.com/typeoftypes/OpenFlux2/transport/ipc"
-	"github.com/typeoftypes/OpenFlux2/transport/manager"
-	"github.com/typeoftypes/OpenFlux2/transport/phpbox"
-	"github.com/typeoftypes/OpenFlux2/transport/registry"
-	"github.com/typeoftypes/OpenFlux2/transport/script"
-	"github.com/typeoftypes/OpenFlux2/tunnel"
-	"github.com/typeoftypes/OpenFlux2/utils"
+	"github.com/p1neappleXpress/OpenFlux/netbind"
+	"github.com/p1neappleXpress/OpenFlux/socks5"
+	"github.com/p1neappleXpress/OpenFlux/streamproxy"
+	"github.com/p1neappleXpress/OpenFlux/transport"
+	"github.com/p1neappleXpress/OpenFlux/transport/control"
+	"github.com/p1neappleXpress/OpenFlux/transport/ipc"
+	"github.com/p1neappleXpress/OpenFlux/transport/manager"
+	"github.com/p1neappleXpress/OpenFlux/transport/phpbox"
+	"github.com/p1neappleXpress/OpenFlux/transport/registry"
+	"github.com/p1neappleXpress/OpenFlux/transport/script"
+	"github.com/p1neappleXpress/OpenFlux/tunnel"
+	"github.com/p1neappleXpress/OpenFlux/utils"
 )
 
 var (
@@ -111,7 +111,7 @@ const (
 // was given (see sessionCookieKey).
 func transportHasCookies(t string) bool {
 	switch t {
-	case "yandex", "vyandex", "boards", "mailru", "cupsonline", "avito", "script":
+	case "yandex", "vyandex", "boards", "mailru", "vkvideo", "cupsonline", "avito", "script":
 		return true
 	}
 	return false
@@ -268,7 +268,7 @@ func main() {
 
 	role := flag.String("role", roleClient, "client | exit | bench-send | bench-sink")
 	inbound := flag.String("inbound", "", "tun | socks5 (client only; default: tun on macOS, socks5 elsewhere)")
-	transportType := flag.String("transport", "yandex", "Transport type (yandex, vyandex, oneme, cupsonline, mailru, telemost)")
+	transportType := flag.String("transport", "yandex", "Transport type (yandex, vyandex, oneme, cupsonline, mailru, vkvideo, telemost)")
 	lanesFlag := flag.Int("lanes", 0, "Exit with no --url: run N carriers of this transport as lanes of one stripe, each creating its own rooms (cupsonline, avito); with --url, a comma-separated list of links is striped the same way")
 	mode := flag.String("mode", "", "Exit-node mode: l3 (default; Linux as root, or Windows as Administrator with WinDivert) or l4 (works everywhere)")
 
@@ -301,6 +301,8 @@ func main() {
 	flag.StringVar(&yandexCookiesFile, "yandex-cookies-file", "", "Netscape cookies.txt with a Yandex login for vyandex transports")
 	boardsURL := flag.String("boards-url", "", "URL for the boards transport")
 	mailruURL := flag.String("mailru-url", "", "URL (weblink) for the mailru transport")
+	vkvideoURL := flag.String("vkvideo-url", "", "live.vkvideo.ru channel or video URL for vkvideo transport")
+	vkvideoKey := flag.String("vkvideo-key", "", "256-bit key (64 hex chars) shared by client and exit for vkvideo channel")
 	cupsonlineURL := flag.String("cupsonline-url", "", "URL for the cupsonline transport")
 	avitoURL := flag.String("avito-url", "", "URL for the avito transport")
 	avitoCookies := flag.String("avito-cookies", "", "Raw cookie string for code.avito.ru (or path to Netscape cookies.txt)")
@@ -366,6 +368,7 @@ TRANSPORT  (single-transport mode)
   -t, --transport=avito        code.avito.ru ShareDB rooms.
   -t, --transport=telemost     Yandex Telemost conference (--url <link>), striped over several participants.
   -t, --transport=mailru       Mail.ru Docs over WebSocket.
+  -t, --transport=vkvideo      VK Video Live chat (link + 256-bit key).
   -t, --transport=direct       Plain TCP to a self-hosted exit.
   -t, --transport=script       A signed JS (goja) transport. Session only
                                (needs --encryption-key-file): see --script-*.
@@ -833,6 +836,7 @@ DEPRECATED (removed in v2)
 			"vyandex":    *vyandexURL,
 			"boards":     *boardsURL,
 			"mailru":     *mailruURL,
+			"vkvideo":    firstNonEmpty(*vkvideoURL, globalDocUrl),
 			"cupsonline": *cupsonlineURL,
 			"avito":      *avitoURL,
 		}
@@ -847,6 +851,7 @@ DEPRECATED (removed in v2)
 			"vyandex":    *vyandexURL,
 			"boards":     *boardsURL,
 			"mailru":     *mailruURL,
+			"vkvideo":    firstNonEmpty(*vkvideoURL, globalDocUrl),
 			"cupsonline": *cupsonlineURL,
 			"avito":      *avitoURL,
 		}
@@ -855,6 +860,8 @@ DEPRECATED (removed in v2)
 		}
 		extra := map[string]map[string]interface{}{
 			"oneme":      {"token": *onemeToken, "uid": *onemeUID, "exit": isExit},
+			"vkvideo":    {"key": *vkvideoKey, "secret": *vkvideoKey},
+			"vklive":     {"key": *vkvideoKey, "secret": *vkvideoKey},
 			"cupsonline": {"exit": isExit},
 			"direct": {
 				"dial":    *directDial,
@@ -890,6 +897,12 @@ DEPRECATED (removed in v2)
 		}
 		if *transportType == "cupsonline" {
 			specs[0].Params = map[string]interface{}{"exit": isExit}
+		}
+		if *transportType == "vkvideo" || *transportType == "vklive" {
+			specs[0].Params = map[string]interface{}{"key": *vkvideoKey, "secret": *vkvideoKey}
+			if *vkvideoURL != "" {
+				specs[0].URL = *vkvideoURL
+			}
 		}
 		if *lanesFlag >= 2 {
 			if specs[0].Params == nil {
@@ -1071,7 +1084,7 @@ DEPRECATED (removed in v2)
 		// Session needs one), or a bench role.
 		// The types the classic path serves; the registry builds them.
 		switch *transportType {
-		case "boards", "vyandex", "yandex", "oneme", "cupsonline", "avito", "mailru", "telemost", "mixed":
+		case "boards", "vyandex", "yandex", "oneme", "cupsonline", "avito", "mailru", "vkvideo", "telemost", "mixed":
 		default:
 			log.Fatalf("Unknown transport type: %s", *transportType)
 		}

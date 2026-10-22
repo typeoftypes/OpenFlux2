@@ -1,0 +1,2 @@
+case "vkvideo", "vklive":
+    return vkvideo.New(url, base), nil
