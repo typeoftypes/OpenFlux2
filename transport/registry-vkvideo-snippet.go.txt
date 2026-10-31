@@ -1,8 +1,0 @@
-// import:
-//   "github.com/p1neappleXpress/OpenFlux/transport/vkvideo"
-//
-// in Types slice add "vkvideo"
-//
-// case:
-	case "vkvideo", "vklive":
-		return vkvideo.New(url, base), nil

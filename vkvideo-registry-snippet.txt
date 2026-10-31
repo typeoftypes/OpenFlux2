@@ -1,4 +1,0 @@
-case "vkvideo", "vklive":
-    // No VK login. Video URL → topic; traffic over public MQTT WSS (or params["broker"]).
-    broker := str("broker")
-    return vkvideo.New(url, broker, base), nil
