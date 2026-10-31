@@ -1,0 +1,2 @@
+[env]
+GH_CONFIG_DIR = "/root/.config/gh-workspaces/personal"
